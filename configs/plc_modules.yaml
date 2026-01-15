@@ -1,0 +1,335 @@
+# ============================================================
+# PLC 基础模块定义 (plc_modules.yaml)
+# ============================================================
+# 所有项目共享的基础模块类型定义
+# 其他配置文件通过 module_ref 字段引用此文件中的模块定义
+# 
+# 使用方式:
+#   在 config_*.yaml 中:
+#     modules:
+#       - name: my_sensor
+#         module_ref: TemperatureSensor  # 引用此文件的模块定义
+#         offset: 0
+# ============================================================
+
+# ============================================================
+# 数据模块 (用于 DB32 等数据块)
+# ============================================================
+modules:
+
+  # ----------------------------------------------------------
+  # 红外测距传感器 (电极深度)
+  # ----------------------------------------------------------
+  InfraredDistance:
+    size: 4  # 2 WORD = 4 bytes
+    unit: "mm"
+    description: 红外测距传感器 (高低位组合)
+    fields:
+      - name: HIGH
+        offset: 0
+        type: WORD
+        description: 高位字
+      - name: LOW
+        offset: 2
+        type: WORD
+        description: 低位字
+
+  # ----------------------------------------------------------
+  # 压力传感器
+  # ----------------------------------------------------------
+  PressureSensor:
+    size: 2  # WORD = 2 bytes
+    unit: "MPa"
+    description: 压力传感器
+    fields:
+      - name: pressure
+        offset: 0
+        type: WORD
+        description: 压力值 (需转换)
+
+  # ----------------------------------------------------------
+  # 流量传感器
+  # ----------------------------------------------------------
+  FlowSensor:
+    size: 2  # WORD = 2 bytes
+    unit: "m³/h"
+    description: 流量传感器
+    fields:
+      - name: flow
+        offset: 0
+        type: WORD
+        description: 流量值 (需转换)
+
+  # ----------------------------------------------------------
+  # 蝶阀控制模块 (继电器状态读取)
+  # ----------------------------------------------------------
+  ValveControl:
+    size: 2  # WORD = 2 bytes
+    description: 蝶阀控制继电器状态
+    fields:
+      - name: OPEN
+        offset: 0.0
+        type: BOOL
+        description: 开阀状态
+      - name: CLOSE
+        offset: 0.1
+        type: BOOL
+        description: 关阀状态
+      - name: BUSY
+        offset: 0.2
+        type: BOOL
+        description: 忙碌状态
+
+  # ----------------------------------------------------------
+  # 继电器写入数组 (蝶阀控制输出)
+  # ----------------------------------------------------------
+  RelayWriteArray:
+    size: 1  # 1 BYTE = 8 bits
+    direction: WRITE
+    description: 继电器写入数组 (Array[0..7] of Bool)
+    fields:
+      - name: bit_0
+        offset: 0.0
+        type: BOOL
+      - name: bit_1
+        offset: 0.1
+        type: BOOL
+      - name: bit_2
+        offset: 0.2
+        type: BOOL
+      - name: bit_3
+        offset: 0.3
+        type: BOOL
+      - name: bit_4
+        offset: 0.4
+        type: BOOL
+      - name: bit_5
+        offset: 0.5
+        type: BOOL
+      - name: bit_6
+        offset: 0.6
+        type: BOOL
+      - name: bit_7
+        offset: 0.7
+        type: BOOL
+
+  # ----------------------------------------------------------
+  # 空气质量传感器 (PM10)
+  # ----------------------------------------------------------
+  AirQuality:
+    size: 2  # WORD = 2 bytes
+    unit: "μg/m³"
+    description: 空气质量传感器 (PM10浓度)
+    fields:
+      - name: air_quality
+        offset: 0
+        type: WORD
+        description: PM10浓度值
+
+  # ----------------------------------------------------------
+  # 温度传感器
+  # ----------------------------------------------------------
+  TemperatureSensor:
+    size: 2  # WORD = 2 bytes
+    unit: "°C"
+    description: 温度传感器
+    fields:
+      - name: temperature
+        offset: 0
+        type: WORD
+        description: 温度值 (需转换)
+
+  # ----------------------------------------------------------
+  # 振动传感器
+  # ----------------------------------------------------------
+  VibrationSensor:
+    size: 8  # 2 REAL = 8 bytes
+    description: 振动传感器
+    fields:
+      - name: amplitude
+        offset: 0
+        type: REAL
+        unit: "mm/s"
+        description: 振动幅值
+      - name: frequency
+        offset: 4
+        type: REAL
+        unit: "Hz"
+        description: 振动频率
+
+  # ----------------------------------------------------------
+  # 运行状态模块
+  # ----------------------------------------------------------
+  RunningStatus:
+    size: 2  # WORD = 2 bytes
+    description: 设备运行状态
+    fields:
+      - name: status
+        offset: 0
+        type: WORD
+        description: 状态字 (0=停止, 1=运行, 2=故障)
+
+  # ----------------------------------------------------------
+  # 电表模块 (完整14字段)
+  # ----------------------------------------------------------
+  ElectricityMeter:
+    size: 56  # 14 REAL × 4 bytes = 56 bytes
+    description: 三相电表 (电压/电流/功率/电能)
+    fields:
+      # 线电压 Uab (3相)
+      - name: Uab_0
+        offset: 0
+        type: REAL
+        unit: "V"
+        description: AB线电压
+      - name: Uab_1
+        offset: 4
+        type: REAL
+        unit: "V"
+        description: BC线电压
+      - name: Uab_2
+        offset: 8
+        type: REAL
+        unit: "V"
+        description: CA线电压
+      # 相电压 Ua (3相)
+      - name: Ua_0
+        offset: 12
+        type: REAL
+        unit: "V"
+        description: A相电压
+      - name: Ua_1
+        offset: 16
+        type: REAL
+        unit: "V"
+        description: B相电压
+      - name: Ua_2
+        offset: 20
+        type: REAL
+        unit: "V"
+        description: C相电压
+      # 电流 I (3相)
+      - name: I_0
+        offset: 24
+        type: REAL
+        unit: "A"
+        description: A相电流
+      - name: I_1
+        offset: 28
+        type: REAL
+        unit: "A"
+        description: B相电流
+      - name: I_2
+        offset: 32
+        type: REAL
+        unit: "A"
+        description: C相电流
+      # 功率
+      - name: Pt
+        offset: 36
+        type: REAL
+        unit: "kW"
+        description: 总有功功率
+      - name: Pa
+        offset: 40
+        type: REAL
+        unit: "kW"
+        description: A相功率
+      - name: Pb
+        offset: 44
+        type: REAL
+        unit: "kW"
+        description: B相功率
+      - name: Pc
+        offset: 48
+        type: REAL
+        unit: "kW"
+        description: C相功率
+      # 累计电能
+      - name: ImpEp
+        offset: 52
+        type: REAL
+        unit: "kWh"
+        description: 正向有功电能
+
+# ============================================================
+# 状态模块 (用于 DB30 等状态块)
+# ============================================================
+status_modules:
+
+  # ----------------------------------------------------------
+  # MB_COMM 通信初始化状态
+  # ----------------------------------------------------------
+  ModbusCommStatus:
+    size: 4  # 4 bytes
+    description: Modbus 通信初始化状态
+    fields:
+      - name: done
+        offset: 0.0
+        type: BOOL
+        description: 初始化完成
+      - name: error
+        offset: 0.1
+        type: BOOL
+        description: 发生错误
+      - name: status
+        offset: 2
+        type: WORD
+        description: 状态码 (16#0 = 正常)
+
+  # ----------------------------------------------------------
+  # MB_MASTER 主站指令状态 (通用)
+  # ----------------------------------------------------------
+  ModbusMasterStatus:
+    size: 4  # 4 bytes
+    description: Modbus Master 指令状态
+    fields:
+      - name: done
+        offset: 0.0
+        type: BOOL
+        description: 指令完成
+      - name: busy
+        offset: 0.1
+        type: BOOL
+        description: 指令执行中
+      - name: error
+        offset: 0.2
+        type: BOOL
+        description: 发生错误
+      - name: status
+        offset: 2
+        type: WORD
+        description: 状态码 (16#0 = 正常)
+
+# ============================================================
+# 数据类型定义 (字节大小参考)
+# ============================================================
+data_types:
+  BOOL:
+    size: 0.125  # 1 bit
+    description: 布尔值
+  BYTE:
+    size: 1
+    description: 8位无符号整数
+  WORD:
+    size: 2
+    description: 16位无符号整数
+  DWORD:
+    size: 4
+    description: 32位无符号整数
+  INT:
+    size: 2
+    description: 16位有符号整数
+  DINT:
+    size: 4
+    description: 32位有符号整数
+  REAL:
+    size: 4
+    description: 32位浮点数 (IEEE 754)
+
+# ============================================================
+# 字节序说明
+# ============================================================
+# S7-1200 PLC 使用大端字节序 (Big Endian)
+# Python 解析时使用: struct.unpack('>H', data)  # WORD
+#                   struct.unpack('>f', data)  # REAL

@@ -1,0 +1,64 @@
+# ============================================================
+# DB 块映射配置
+# ============================================================
+# 定义需要轮询的 DB 块及其用途
+# ============================================================
+
+# DB 块列表
+db_blocks:
+  # DB30 - Modbus 通信状态
+  - db_number: 30
+    db_name: "MODBUS_DB_Value"
+    size: 40
+    type: "status"
+    description: "Modbus Master 通信状态"
+    parser: "ModbusStatusParser"
+    config_file: "status_L3_P2_F2_C4.yaml"
+    store_to_db: false  # 只缓存，不写入数据库
+    
+  # DB32 - Modbus 传感器数据
+  - db_number: 32
+    db_name: "MODBUS_DATA_VALUE"
+    size: 28  # 不包括 MBrly (offset 28)
+    type: "data"
+    description: "Modbus 传感器数据 (测距/压力/流量/蝶阀)"
+    parser: "ModbusDataParser"
+    config_file: "config_L3_P2_F2_C4.yaml"
+    store_to_db: true  # 写入 InfluxDB
+
+# 轮询配置
+polling:
+  interval: 5  # 秒
+  batch_size: 10  # 批量写入间隔 (轮询次数)
+  retry_interval: 30  # 重试间隔 (秒)
+
+# ============================================================
+# 旧配置 (保留兼容)
+# ============================================================
+db_mappings:
+  DB100:
+    description: 电炉温度和电量数据 (预留)
+    devices:
+      - device_id: furnace_1
+        modules:
+          - type: ElectricityMeter
+            offset: 0
+          - type: TemperatureSensor
+            offset: 40
+            count: 3
+            
+      - device_id: furnace_2
+        modules:
+          - type: ElectricityMeter
+            offset: 100
+          - type: TemperatureSensor
+            offset: 140
+            count: 3
+            
+      - device_id: furnace_3
+        modules:
+          - type: ElectricityMeter
+            offset: 200
+          - type: TemperatureSensor
+            offset: 240
+            count: 3

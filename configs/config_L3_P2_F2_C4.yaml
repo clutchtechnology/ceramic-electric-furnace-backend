@@ -1,0 +1,397 @@
+# ============================================================
+# 电炉车间设备配置文件
+# L3: 3台电炉, P2: 2台水泵, F2: 2台风机, C4: 4个料仓
+# ============================================================
+# 模块定义引用自: plc_modules.yaml
+# 使用 module_ref 字段引用基础模块类型
+# ============================================================
+
+# 模块定义引用
+module_definitions: "plc_modules.yaml"
+
+# 系统概述
+system:
+  name: 电炉车间数字系统
+  version: "1.0"
+  description: L3_P2_F2_C4 配置 (3电炉 + 2泵房 + 2风机 + 4下料管)
+
+# ============================================================
+# DB32 - MODBUS_DATA_VALUE 数据块定义
+# PLC: CPU 1214C AC/DC/Rly
+# 包含: 3红外测距 + 2压力计 + 2流量计 + 4(蝶阀控制继电器)写入数组
+# ============================================================
+# Size Calculation (重要!):
+#   - 实际地址范围: 0.0 ~ 28.7 (即 28.8 bytes)
+#   - MBrly (写入数组): offset 28.0, Array[0..7] of Bool, 占用 28.0~28.7
+#   - 读取字节数: 29 bytes (必须覆盖到 offset 28)
+#   - 注意: 不要超过 29 bytes, 否则会超出 DB 块边界报错!
+# ============================================================
+db32_modbus:
+  db_block: 32
+  name: MODBUS_DATA_VALUE
+  total_size: 29  # 实际地址 28.8 bytes, 读取需要 29 完整字节
+  
+  modules:
+    # ----------------------
+    # 红外测距 (3个电极深度)
+    # fields 定义引用自 plc_modules.yaml -> InfraredDistance
+    # ----------------------
+    - name: LENTH1
+      module_ref: InfraredDistance
+      offset: 0
+      description: 1号电极红外测距
+          
+    - name: LENTH2
+      module_ref: InfraredDistance
+      offset: 4
+      description: 2号电极红外测距
+          
+    - name: LENTH3
+      module_ref: InfraredDistance
+      offset: 8
+      description: 3号电极红外测距
+
+    # ----------------------
+    # 压力计 (2个冷却水压力)
+    # fields 定义引用自 plc_modules.yaml -> PressureSensor
+    # ----------------------
+    - name: WATER_PRESS_1
+      module_ref: PressureSensor
+      offset: 12
+      description: 1号冷却水压力
+          
+    - name: WATER_PRESS_2
+      module_ref: PressureSensor
+      offset: 14
+      description: 2号冷却水压力
+
+    # ----------------------
+    # 流量计 (2个冷却水流量)
+    # fields 定义引用自 plc_modules.yaml -> FlowSensor
+    # ----------------------
+    - name: WATER_FLOW_1
+      module_ref: FlowSensor
+      offset: 16
+      description: 1号冷却水流量
+          
+    - name: WATER_FLOW_2
+      module_ref: FlowSensor
+      offset: 18
+      description: 2号冷却水流量
+
+    # ----------------------
+    # 蝶阀控制继电器 (4组, 控制8个蝶阀)
+    # fields 定义引用自 plc_modules.yaml -> ValveControl
+    # ----------------------
+    - name: Ctrl_1
+      module_ref: ValveControl
+      offset: 20
+      description: 控制继电器1,2 (蝶阀1-2)
+          
+    - name: Ctrl_2
+      module_ref: ValveControl
+      offset: 22
+      description: 控制继电器3,4 (蝶阀3-4)
+          
+    - name: Ctrl_3
+      module_ref: ValveControl
+      offset: 24
+      description: 控制继电器5,6 (蝶阀5-6)
+          
+    - name: Ctrl_4
+      module_ref: ValveControl
+      offset: 26
+      description: 控制继电器7,8 (蝶阀7-8)
+
+    # ----------------------
+    # 继电器写入数组 (8位, 用于控制蝶阀开关)
+    # fields 定义引用自 plc_modules.yaml -> RelayWriteArray
+    # ----------------------
+    - name: MBrly
+      module_ref: RelayWriteArray
+      offset: 28
+      direction: WRITE
+      description: 蝶阀控制写入数组 (Array[0..7] of Bool)
+      usage: |
+        写入 true/false 控制对应通道的蝶阀开关
+        MBrly[0] -> 通道0 -> 蝶阀1 ... MBrly[7] -> 通道7 -> 蝶阀8
+
+# ============================================================
+# 1. 电炉配置 (3台) - 关联DB32数据
+# ============================================================
+furnaces:
+  - device_id: furnace_1
+    name: 1号电炉
+    db_block: 32
+    description: 使用DB32的MODBUS_DATA_VALUE
+    modules:
+      # 电极深度 - 使用红外测距
+      - name: electrode_depth
+        type: InfraredDistance
+        source: db32_modbus
+        mapping:
+          - LENTH1  # 1号电极
+          - LENTH2  # 2号电极
+          - LENTH3  # 3号电极
+        description: 3根电极进入深度 (红外测距)
+        
+      # 冷却水压力
+      - name: cooling_pressure
+        type: PressureSensor
+        source: db32_modbus
+        mapping:
+          - WATER_PRESS_1
+          - WATER_PRESS_2
+        description: 冷却水压力 (2路)
+        
+      # 冷却水流量
+      - name: cooling_flow
+        type: FlowSensor
+        source: db32_modbus
+        mapping:
+          - WATER_FLOW_1
+          - WATER_FLOW_2
+        description: 冷却水流量 (2路)
+        
+      # 蝶阀控制
+      - name: butterfly_valves
+        type: ValveControl
+        source: db32_modbus
+        mapping:
+          - Ctrl_1  # 蝶阀1-2
+          - Ctrl_2  # 蝶阀3-4
+          - Ctrl_3  # 蝶阀5-6
+          - Ctrl_4  # 蝶阀7-8
+        write_array: MBrly
+        description: 4路蝶阀控制 (共8个继电器)
+
+# ============================================================
+# 2. 泵房配置 (2台水泵)
+# ============================================================
+pumps:
+  - device_id: pump_1
+    name: 1号水泵
+    db_block: 101
+    offset: 0
+    modules:
+      # 水泵压力
+      - name: pressure
+        type: PressureSensor
+        offset: 0
+        size: 4
+        unit: "MPa"
+        description: 水泵出口/系统压力
+        
+      # 水泵振动
+      - name: vibration
+        type: VibrationSensor
+        offset: 4
+        size: 8
+        fields:
+          - name: amplitude
+            offset: 0
+            type: REAL
+            unit: "mm/s"
+            description: 振动幅值
+          - name: frequency
+            offset: 4
+            type: REAL
+            unit: "Hz"
+            description: 振动频率
+            
+      # 水泵电表
+      - name: electricity
+        type: ElectricityMeter
+        offset: 12
+        size: 40
+
+  - device_id: pump_2
+    name: 2号水泵
+    db_block: 101
+    offset: 60
+    modules:
+      - name: pressure
+        type: PressureSensor
+        offset: 0
+        size: 4
+      - name: vibration
+        type: VibrationSensor
+        offset: 4
+        size: 8
+      - name: electricity
+        type: ElectricityMeter
+        offset: 12
+        size: 40
+
+# ============================================================
+# 3. 除尘器风机配置 (2台)
+# ============================================================
+fans:
+  - device_id: fan_1
+    name: 1号除尘风机
+    db_block: 102
+    offset: 0
+    modules:
+      # 风机电表
+      - name: electricity
+        type: ElectricityMeter
+        offset: 0
+        size: 40
+        description: 风机瞬时功率与累计能耗
+        
+      # 风机振动
+      - name: vibration
+        type: VibrationSensor
+        offset: 40
+        size: 8
+        fields:
+          - name: amplitude
+            offset: 0
+            type: REAL
+            unit: "mm/s"
+          - name: frequency
+            offset: 4
+            type: REAL
+            unit: "Hz"
+            
+      # 运行状态
+      - name: status
+        type: RunningStatus
+        offset: 48
+        size: 2
+
+  - device_id: fan_2
+    name: 2号除尘风机
+    db_block: 102
+    offset: 60
+    modules:
+      - name: electricity
+        type: ElectricityMeter
+        offset: 0
+        size: 40
+      - name: vibration
+        type: VibrationSensor
+        offset: 40
+        size: 8
+      - name: status
+        type: RunningStatus
+        offset: 48
+        size: 2
+
+# ============================================================
+# 4. 料仓配置 (4个)
+# ============================================================
+hoppers:
+  - device_id: hopper_1
+    name: 1号料仓
+    db_block: 103
+    offset: 0
+    modules:
+      # 除尘器入口温度
+      - name: inlet_temp
+        type: TemperatureSensor
+        offset: 0
+        size: 4
+        unit: "°C"
+        description: 除尘器入口温度
+        
+      # PM10 浓度
+      - name: pm10
+        type: AirQuality
+        offset: 4
+        size: 4
+        unit: "μg/m³"
+        description: 除尘器排风口PM10浓度
+
+  - device_id: hopper_2
+    name: 2号料仓
+    db_block: 103
+    offset: 20
+    modules:
+      - name: inlet_temp
+        type: TemperatureSensor
+        offset: 0
+        size: 4
+      - name: pm10
+        type: AirQuality
+        offset: 4
+        size: 4
+
+  - device_id: hopper_3
+    name: 3号料仓
+    db_block: 103
+    offset: 40
+    modules:
+      - name: inlet_temp
+        type: TemperatureSensor
+        offset: 0
+        size: 4
+      - name: pm10
+        type: AirQuality
+        offset: 4
+        size: 4
+
+  - device_id: hopper_4
+    name: 4号料仓
+    db_block: 103
+    offset: 60
+    modules:
+      - name: inlet_temp
+        type: TemperatureSensor
+        offset: 0
+        size: 4
+      - name: pm10
+        type: AirQuality
+        offset: 4
+        size: 4
+
+# ============================================================
+# 5. 视频画面配置
+# ============================================================
+cameras:
+  - camera_id: camera_furnace_rear
+    name: 炉后画面
+    stream_url: "rtsp://192.168.1.200:554/furnace_rear"
+    description: 实时显示炉后画面
+    
+  - camera_id: camera_pump_room
+    name: 泵房画面
+    stream_url: "rtsp://192.168.1.201:554/pump_room"
+    description: 实时显示泵房画面
+
+# ============================================================
+# 6. 告警阈值配置
+# ============================================================
+alarms:
+  # 电炉告警
+  furnace:
+    skin_temp_high: 800      # 炉皮超温告警 °C
+    cooling_flow_low: 5.0    # 冷却水低流量 m³/h
+    cooling_pressure_low: 0.2   # 冷却水低压 MPa
+    cooling_pressure_high: 0.8  # 冷却水高压 MPa
+    filter_pressure_diff_high: 2000  # 过滤器压差告警 Pa
+    
+  # 水泵告警
+  pump:
+    pressure_low: 0.3        # 低压告警 MPa
+    pressure_high: 1.0       # 高压告警 MPa
+    vibration_warning: 4.5   # 振动预警 mm/s
+    vibration_alarm: 7.1     # 振动告警 mm/s
+    
+  # 风机告警
+  fan:
+    vibration_warning: 4.5   # 振动预警 mm/s
+    vibration_alarm: 7.1     # 振动告警 mm/s
+    
+  # 料仓告警
+  hopper:
+    inlet_temp_high: 200     # 入口超温 °C
+    pm10_high: 150           # PM10超标 μg/m³
+
+# ============================================================
+# 7. 数据刷新配置
+# ============================================================
+refresh:
+  realtime_interval: 5       # 实时数据刷新间隔 (秒)
+  max_delay: 3               # 最大显示延迟 (秒)
+  history_batch_write: 30    # 历史数据批量写入间隔 (轮询次数)

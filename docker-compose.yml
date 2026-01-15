@@ -1,0 +1,85 @@
+services:
+  # InfluxDB 时序数据库
+  influxdb:
+    image: influxdb:2.7
+    container_name: furnace-influxdb
+    restart: unless-stopped
+    ports:
+      - '8088:8086'  # 外部端口8088，避免与其他项目冲突
+    volumes:
+      - D:/docker-data/furnace/influxdb-data:/var/lib/influxdb2
+      - D:/docker-data/furnace/influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin_password
+      - DOCKER_INFLUXDB_INIT_ORG=furnace
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensor_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=furnace-token
+    networks:
+      - furnace-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Python Backend (Mock模式 - 默认配置)
+  backend:
+    build: .
+    container_name: furnace-backend
+    restart: unless-stopped
+    ports:
+      - '8082:8082'
+    depends_on:
+      - influxdb
+    volumes:
+      - .:/app
+      - ./configs:/app/configs
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=furnace-token
+      - INFLUX_ORG=furnace
+      - INFLUX_BUCKET=sensor_data
+      - SERVER_PORT=8082
+      - USE_MOCK_DATA=true
+      - ENABLE_POLLING=true
+      - ENABLE_MOCK_POLLING=true  # Mock模式下启用轮询
+    networks:
+      - furnace-network
+    profiles:
+      - default
+      - mock
+
+  # Python Backend (真实PLC模式)
+  backend-real:
+    build: .
+    container_name: furnace-backend
+    restart: unless-stopped
+    ports:
+      - '8082:8082'
+    depends_on:
+      - influxdb
+    volumes:
+      - .:/app
+      - ./configs:/app/configs
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=furnace-token
+      - INFLUX_ORG=furnace
+      - INFLUX_BUCKET=sensor_data
+      - SERVER_PORT=8082
+      - USE_MOCK_DATA=false
+      - USE_REAL_PLC=true
+      - ENABLE_POLLING=true
+    networks:
+      - furnace-network
+    profiles:
+      - production
+
+networks:
+  furnace-network:
+    driver: bridge
