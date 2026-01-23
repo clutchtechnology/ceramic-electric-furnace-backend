@@ -5,7 +5,7 @@ services:
     container_name: furnace-influxdb
     restart: unless-stopped
     ports:
-      - '8088:8086'  # 外部端口8088，避免与其他项目冲突
+      - '8089:8086'  # 外部端口8089，避免与hopper项目(8088)冲突
     volumes:
       - D:/docker-data/furnace/influxdb-data:/var/lib/influxdb2
       - D:/docker-data/furnace/influxdb-config:/etc/influxdb2

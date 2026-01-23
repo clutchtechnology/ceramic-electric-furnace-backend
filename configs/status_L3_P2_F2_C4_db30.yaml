@@ -1,0 +1,90 @@
+# ============================================================
+# DB30 - MODBUS_DB_Value 状态数据块配置
+# ============================================================
+# 根据截屏对应:
+# DB30 包含多个 MB_MASTER 指令的状态副本
+# 每个模块 4 字节
+# ============================================================
+# 模块定义引用自: plc_modules.yaml
+# ============================================================
+
+# 模块定义引用
+module_definitions: "plc_modules.yaml"
+
+db_block:
+  db_number: 30
+  db_name: "MODBUS_DB_Value"
+  total_size: 32
+  description: "Modbus Master 通信状态"
+
+# 状态模块定义
+# fields 定义引用自 plc_modules.yaml -> status_modules -> ModbusMasterStatus
+status_module:
+  module_ref: ModbusMasterStatus
+  module_size: 4
+
+# 设备状态映射
+devices:
+  # Offset 0: MB_COMM (通信初始化)
+  - device_id: "status_comm"
+    device_name: "通信初始化状态"
+    plc_name: "MB_COMM"
+    start_offset: 0
+    enabled: true
+
+  # Offset 4: MB_MASTER_WRITE_1 (蝶阀写入)
+  - device_id: "status_write_valve"
+    device_name: "蝶阀控制写入状态"
+    plc_name: "MB_MASTER_WRITE_1"
+    start_offset: 4
+    enabled: true
+    description: "对应 MBrly 写入操作"
+
+  # Offset 8: MB_MASTER_LENTH_1 (1号测距)
+  - device_id: "status_lenth_1"
+    device_name: "1号测距通信状态"
+    plc_name: "MB_MASTER_LENTH_1"
+    start_offset: 8
+    enabled: true
+    data_device_id: "LENTH1"
+
+  # Offset 12: MB_MASTER_LENTH_2 (2号测距)
+  - device_id: "status_lenth_2"
+    device_name: "2号测距通信状态"
+    plc_name: "MB_MASTER_LENTH_2"
+    start_offset: 12
+    enabled: true
+    data_device_id: "LENTH2"
+
+  # Offset 16: MB_MASTER_LENTH_3 (3号测距)
+  - device_id: "status_lenth_3"
+    device_name: "3号测距通信状态"
+    plc_name: "MB_MASTER_LENTH_3"
+    start_offset: 16
+    enabled: true
+    data_device_id: "LENTH3"
+
+  # Offset 20: MB_MASTER_WATER_1 (1号流量)
+  - device_id: "status_flow_1"
+    device_name: "1号流量计通信状态"
+    plc_name: "MB_MASTER_WATER_1"
+    start_offset: 20
+    enabled: true
+    data_device_id: "WATER_FLOW_1"
+
+  # Offset 24: MB_MASTER_WATER_2 (2号流量)
+  - device_id: "status_flow_2"
+    device_name: "2号流量计通信状态"
+    plc_name: "MB_MASTER_WATER_2"
+    start_offset: 24
+    enabled: true
+    data_device_id: "WATER_FLOW_2"
+
+  # Offset 28: MB_MASTER_PRESS_1 (1号压力)
+  - device_id: "status_press_1"
+    device_name: "1号压力计通信状态"
+    plc_name: "MB_MASTER_PRESS_1"
+    start_offset: 28
+    enabled: true
+    data_device_id: "WATER_PRESS_1"
+

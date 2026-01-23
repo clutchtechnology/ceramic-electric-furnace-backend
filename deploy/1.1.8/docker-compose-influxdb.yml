@@ -1,0 +1,31 @@
+# ============================================================
+# InfluxDB 独立部署 (Docker Compose)
+# ============================================================
+# 说明: 后端 Python 本地运行，只有 InfluxDB 使用 Docker
+# ============================================================
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: furnace-influxdb
+    restart: unless-stopped
+    ports:
+      - '8089:8086'
+    volumes:
+      - D:/docker-data/furnace/influxdb-data:/var/lib/influxdb2
+      - D:/docker-data/furnace/influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin_password
+      - DOCKER_INFLUXDB_INIT_ORG=furnace
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensor_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=furnace-token
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+networks:
+  default:
+    name: furnace-network

@@ -33,7 +33,7 @@ class ModbusStatusParser:
         Args:
             config_path: 状态配置文件路径
         """
-        self.config_path = Path(config_path) if config_path else self.PROJECT_ROOT / "configs" / "status_L3_P2_F2_C4.yaml"
+        self.config_path = Path(config_path) if config_path else self.PROJECT_ROOT / "configs" / "status_L3_P2_F2_C4_db30.yaml"
         
         self.db_config: Dict = {}
         self.devices: List[Dict] = []

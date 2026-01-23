@@ -1,0 +1,92 @@
+# ============================================================
+# DB41 - DataState 数据状态块配置
+# ============================================================
+# 根据 PLC 截屏对应:
+# DB41 包含各设备的数据状态 (Error + Status)
+# 每个模块 4 字节: Struct { Error: Bool, Status: Word }
+# ============================================================
+# 模块定义引用自: plc_modules.yaml
+# ============================================================
+
+# 模块定义引用
+module_definitions: "plc_modules.yaml"
+
+db_block:
+  db_number: 41
+  db_name: "DataState"
+  total_size: 28  # 7个设备 x 4 bytes = 28
+  description: "传感器数据通信状态"
+
+# 状态模块定义
+# DB41 的模块结构与 DB30 不同:
+# - Error: Bool @ 0.0
+# - Status: Word @ 2.0
+# 所以每个模块实际占 4 字节 (含对齐)
+status_module:
+  module_ref: DataStateStatus
+  module_size: 4  # 实际按 4 字节对齐
+
+# 设备状态映射
+devices:
+  # Offset 0: LENTH1 (1号测距)
+  - device_id: "status_lenth1"
+    device_name: "1号测距数据状态"
+    plc_name: "LENTH1"
+    start_offset: 0
+    enabled: true
+    data_device_id: "LENTH1"
+    description: "红外测距传感器1"
+
+  # Offset 4: LENTH2 (2号测距)
+  - device_id: "status_lenth2"
+    device_name: "2号测距数据状态"
+    plc_name: "LENTH2"
+    start_offset: 4
+    enabled: true
+    data_device_id: "LENTH2"
+    description: "红外测距传感器2"
+
+  # Offset 8: LENTH3 (3号测距)
+  - device_id: "status_lenth3"
+    device_name: "3号测距数据状态"
+    plc_name: "LENTH3"
+    start_offset: 8
+    enabled: true
+    data_device_id: "LENTH3"
+    description: "红外测距传感器3"
+
+  # Offset 12: WATER_1 (1号流量)
+  - device_id: "status_water1"
+    device_name: "1号流量计数据状态"
+    plc_name: "WATER_1"
+    start_offset: 12
+    enabled: true
+    data_device_id: "WATER_FLOW_1"
+    description: "冷却水流量计1"
+
+  # Offset 16: WATER_2 (2号流量)
+  - device_id: "status_water2"
+    device_name: "2号流量计数据状态"
+    plc_name: "WATER_2"
+    start_offset: 16
+    enabled: true
+    data_device_id: "WATER_FLOW_2"
+    description: "冷却水流量计2"
+
+  # Offset 20: PRESS_1 (1号压力)
+  - device_id: "status_press1"
+    device_name: "1号压力计数据状态"
+    plc_name: "PRESS_1"
+    start_offset: 20
+    enabled: true
+    data_device_id: "WATER_PRESS_1"
+    description: "冷却水压力计1"
+
+  # Offset 24: PRESS_2 (2号压力)
+  - device_id: "status_press2"
+    device_name: "2号压力计数据状态"
+    plc_name: "PRESS_2"
+    start_offset: 24
+    enabled: true
+    data_device_id: "WATER_PRESS_2"
+    description: "冷却水压力计2"

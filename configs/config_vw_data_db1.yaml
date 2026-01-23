@@ -1,0 +1,547 @@
+# ============================================================
+# 电炉上位机 - DB1 变频器/弧流弧压数据配置
+# 配置文件: Vw_Data 数据块
+# 适用场景: 电炉车间变频器电机输出、弧流弧压监控
+# ============================================================
+# 模块定义引用
+module_definitions: "plc_modules.yaml"
+
+# 系统概述
+system:
+  name: 电炉车间变频器数据监控
+  version: "2.0"
+  description: DB1 Vw_Data 配置 (电机输出 + 弧流弧压 + 变频电机电流)
+
+# ============================================================
+# DB1 - Vw_Data 数据块定义
+# PLC: CPU 1214C AC/DC/Rly
+# 总大小: 182 bytes (offset 0~181)
+# ============================================================
+# 数据结构概述 (根据实际PLC配置):
+#   - offset 0-7: 电机输出 (4个 Int)
+#   - offset 8-9: Vw8 变量
+#   - offset 10-24: ⭐⭐ UVW 三相弧流弧压 (前端实际使用的数据)
+#   - offset 26-31: Vw系列变量
+#   - offset 32-47: 弧流设定值 + 自动灵敏度 (UVW三相)
+#   - offset 48-67: 死区设置 (手动死区%, 死区下限, 死区上限)
+#   - offset 68-93: 其他 Vw 系列变量
+#   - offset 94-147: 弧流弧压内部数据 (归一化Real + 比例Int, 前端不使用)
+#   - offset 148-181: 变频电机电流 / 电机输出归一 / 总电流总功率
+# ============================================================
+
+db1_vw_data:
+  db_block: 1
+  name: "Vw_Data"
+  total_size: 182  # offset 0 ~ 181
+  
+  # 字段定义列表 (按偏移量顺序)
+  fields:
+    # ----------------------
+    # 电机输出 (Int 类型, 2 bytes) offset 0-7
+    # ----------------------
+    - name: motor_output_1
+      offset: 0
+      type: INT
+      unit: ""
+      description: 第一路电机输出
+      
+    - name: motor_output_spare
+      offset: 2
+      type: INT
+      unit: ""
+      description: 备用电机输出
+      
+    - name: motor_output_2
+      offset: 4
+      type: INT
+      unit: ""
+      description: 第二路电机输出
+      
+    - name: motor_output_3
+      offset: 6
+      type: INT
+      unit: ""
+      description: 第三路电机输出
+
+
+    # ----------------------
+    - name: Vw8
+      offset: 8
+      type: INT
+      unit: ""
+      description: Vw8
+
+    # ============================================================
+    # ⭐⭐⭐ UVW 三相弧流弧压 (前端实际使用的数据) ⭐⭐⭐
+    # 根据 PLC 变量表: offset 10-24
+    # ============================================================
+    - name: arc_current_U
+      offset: 10
+      type: INT
+      unit: "A"
+      description: U相弧流 (实际采集值)
+
+    - name: arc_voltage_U
+      offset: 12
+      type: INT
+      unit: "V"
+      description: U相弧压 (实际采集值)
+
+    - name: Vw14
+      offset: 14
+      type: INT
+      unit: ""
+      description: Vw14 (保留)
+
+    - name: arc_current_V
+      offset: 16
+      type: INT
+      unit: "A"
+      description: V相弧流 (实际采集值)
+
+    - name: arc_voltage_V
+      offset: 18
+      type: INT
+      unit: "V"
+      description: V相弧压 (实际采集值)
+
+    - name: Vw20
+      offset: 20
+      type: INT
+      unit: ""
+      description: Vw20 (保留)
+
+    - name: arc_current_W
+      offset: 22
+      type: INT
+      unit: "A"
+      description: W相弧流 (实际采集值)
+
+    - name: arc_voltage_W
+      offset: 24
+      type: INT
+      unit: "V"
+      description: W相弧压 (实际采集值)
+
+    - name: Vw26
+      offset: 26
+      type: INT
+      unit: ""
+      description: Vw26
+
+    - name: Vw28
+      offset: 28
+      type: INT
+      unit: ""
+      description: Vw28
+
+    - name: Vw30
+      offset: 30
+      type: INT
+      unit: ""
+      description: Vw30
+
+    - name: arc_current_setpoint_U
+      offset: 32
+      type: INT
+      unit: "A"
+      description: U相弧流设定值 (A)
+
+    - name: arc_sensitivity_U
+      offset: 34
+      type: INT
+      unit: ""
+      description: U相弧流自动灵敏度值
+
+    - name: arc_current_setpoint_V
+      offset: 36
+      type: INT
+      unit: "A"
+      description: V相弧流设定值 (A)
+
+    - name: arc_sensitivity_V
+      offset: 38
+      type: INT
+      unit: ""
+      description: V相弧流自动灵敏度值
+
+    - name: arc_current_setpoint_W
+      offset: 40
+      type: INT
+      unit: "A"
+      description: W相弧流设定值 (A)
+
+    - name: arc_sensitivity_W
+      offset: 42
+      type: INT
+      unit: ""
+      description: W相弧流自动灵敏度值
+
+    - name: Vw44
+      offset: 44
+      type: INT
+      unit: ""
+      description: Vw44
+
+    - name: Vw46
+      offset: 46
+      type: INT
+      unit: ""
+      description: Vw46
+
+    - name: manual_deadzone_percent
+      offset: 48
+      type: INT
+      unit: "%"
+      description: 手动死区百分比 (%)
+
+    - name: Vw50
+      offset: 50
+      type: INT
+      unit: ""
+      description: Vw50
+
+    - name: Vw52
+      offset: 52
+      type: INT
+      unit: ""
+      description: Vw52
+
+    - name: Vw54
+      offset: 54
+      type: INT
+      unit: ""
+      description: Vw54
+
+    - name: Vw56
+      offset: 56
+      type: INT
+      unit: ""
+      description: Vw56
+
+    - name: Vw58
+      offset: 58
+      type: INT
+      unit: ""
+      description: Vw58
+
+    - name: Vw60
+      offset: 60
+      type: INT
+      unit: ""
+      description: Vw60
+
+    - name: Vw62
+      offset: 62
+      type: INT
+      unit: ""
+      description: Vw62
+
+    # ----------------------
+    # 死区上下限 (offset 64-68)
+    # ----------------------
+    - name: arc_current_deadzone_lower
+      offset: 64
+      type: INT
+      unit: "A"
+      description: 弧流死区下限 (A)
+
+    - name: arc_current_deadzone_upper  
+      offset: 66
+      type: INT
+      unit: "A"
+      description: 弧流死区上限 (A)
+
+    # ----------------------
+    # 其他变量 (offset 68-181)
+    # ----------------------
+    - name: Vw68
+      offset: 68
+      type: INT
+      unit: ""
+      description: Vw68
+
+    - name: Vw70
+      offset: 70
+      type: INT
+      unit: ""
+      description: Vw70
+
+    - name: Vw72
+      offset: 72
+      type: INT
+      unit: ""
+      description: Vw72
+
+    - name: Vw74
+      offset: 74
+      type: INT
+      unit: ""
+      description: Vw74
+
+    - name: Vw76
+      offset: 76
+      type: INT
+      unit: ""
+      description: Vw76
+
+    - name: Vw78
+      offset: 78
+      type: INT
+      unit: ""
+      description: Vw78
+
+    - name: Vw80
+      offset: 80
+      type: INT
+      unit: ""
+      description: Vw80
+
+    - name: Vw82
+      offset: 82
+      type: INT
+      unit: ""
+      description: Vw82
+
+    - name: Vw84
+      offset: 84
+      type: INT
+      unit: ""
+      description: Vw84
+
+    - name: Vw86
+      offset: 86
+      type: INT
+      unit: ""
+      description: Vw86
+
+    - name: Vw88
+      offset: 88
+      type: INT
+      unit: ""
+      description: Vw88
+
+    - name: Vw90
+      offset: 90
+      type: INT
+      unit: ""
+      description: Vw90
+
+    - name: Vw92
+      offset: 92
+      type: INT
+      unit: ""
+      description: Vw92
+
+    # ============================================================
+    # 弧流弧压数据 (offset 94-147)
+    # 结构: 4相 × (归一化Real + 比例放大Int) + 弧流给定
+    # 注意: 这些是PLC内部的弧流弧压原始数据，前端实际使用的是
+    #       offset 10-28 的 UVW 三相数据和 offset 64-67 的死区
+    # ============================================================
+    
+    # --- A相弧流弧压 (offset 94-105) ---
+    - name: arc_current_A_normalized
+      offset: 94
+      type: REAL
+      unit: ""
+      description: A相弧流归一化值 (Real, 4 bytes)
+      
+    - name: arc_current_A_scale
+      offset: 98
+      type: INT
+      unit: "A"
+      description: A相弧流比例放大值 (Int)
+      
+    - name: arc_voltage_A_normalized
+      offset: 100
+      type: REAL
+      unit: ""
+      description: A相弧压归一化值 (Real, 4 bytes)
+      
+    - name: arc_voltage_A_scale
+      offset: 104
+      type: INT
+      unit: "V"
+      description: A相弧压比例放大值 (Int)
+    
+    # --- B相弧流弧压 (offset 106-117) ---
+    - name: arc_current_B_normalized
+      offset: 106
+      type: REAL
+      unit: ""
+      description: B相弧流归一化值 (Real, 4 bytes)
+      
+    - name: arc_current_B_scale
+      offset: 110
+      type: INT
+      unit: "A"
+      description: B相弧流比例放大值 (Int)
+      
+    - name: arc_voltage_B_normalized
+      offset: 112
+      type: REAL
+      unit: ""
+      description: B相弧压归一化值 (Real, 4 bytes)
+      
+    - name: arc_voltage_B_scale
+      offset: 116
+      type: INT
+      unit: "V"
+      description: B相弧压比例放大值 (Int)
+    
+    # --- C相弧流弧压 (offset 118-129) ---
+    - name: arc_current_C_normalized
+      offset: 118
+      type: REAL
+      unit: ""
+      description: C相弧流归一化值 (Real, 4 bytes)
+      
+    - name: arc_current_C_scale
+      offset: 122
+      type: INT
+      unit: "A"
+      description: C相弧流比例放大值 (Int)
+      
+    - name: arc_voltage_C_normalized
+      offset: 124
+      type: REAL
+      unit: ""
+      description: C相弧压归一化值 (Real, 4 bytes)
+      
+    - name: arc_voltage_C_scale
+      offset: 128
+      type: INT
+      unit: "V"
+      description: C相弧压比例放大值 (Int)
+    
+    # --- 备用相弧流弧压 (offset 130-141) ---
+    - name: arc_current_spare_normalized
+      offset: 130
+      type: REAL
+      unit: ""
+      description: 备用相弧流归一化值 (Real, 4 bytes)
+      
+    - name: arc_current_spare_scale
+      offset: 134
+      type: INT
+      unit: "A"
+      description: 备用相弧流比例放大值 (Int)
+      
+    - name: arc_voltage_spare_normalized
+      offset: 136
+      type: REAL
+      unit: ""
+      description: 备用相弧压归一化值 (Real, 4 bytes)
+      
+    - name: arc_voltage_spare_scale
+      offset: 140
+      type: INT
+      unit: "V"
+      description: 备用相弧压比例放大值 (Int)
+    
+    # --- 弧流给定 (offset 142-147) ---
+    - name: arc_current_setpoint_normalized
+      offset: 142
+      type: REAL
+      unit: ""
+      description: 弧流给定归一化值 (Real, 4 bytes)
+      
+    - name: arc_current_setpoint_scale
+      offset: 146
+      type: INT
+      unit: "A"
+      description: 弧流给定比例放大值 (Int)
+
+    # ============================================================
+    # 变频电机电流 / 电机输出归一化 / 总电流总功率 (offset 148-181)
+    # ============================================================
+    - name: vfd_motor_current_A_normalized
+      offset: 148
+      type: REAL
+      unit: ""
+      description: U相变频电机电流归一化值
+      
+    - name: vfd_motor_current_A_scale
+      offset: 152
+      type: INT
+      unit: "A"
+      description: U相变频电机电流比例放大值
+      
+    - name: vfd_motor_current_B_normalized
+      offset: 154
+      type: REAL
+      unit: ""
+      description: V相变频电机电流归一化值
+      
+    - name: vfd_motor_current_B_scale
+      offset: 158
+      type: INT
+      unit: "A"
+      description: V相变频电机电流比例放大值
+      
+    - name: vfd_motor_current_C_normalized
+      offset: 160
+      type: REAL
+      unit: ""
+      description: W相变频电机电流归一化值
+      
+    - name: vfd_motor_current_C_scale
+      offset: 164
+      type: INT
+      unit: "A"
+      description: W相变频电机电流比例放大值
+      
+    - name: motor_output_1_normalized
+      offset: 166
+      type: REAL
+      unit: ""
+      description: 第一路电机输出归一化值
+      
+    - name: motor_output_spare_normalized
+      offset: 170
+      type: REAL
+      unit: ""
+      description: 备用电机输出归一化值
+      
+    - name: motor_output_2_normalized
+      offset: 174
+      type: REAL
+      unit: ""
+      description: 第二路电机输出归一化值
+      
+    - name: motor_output_3_normalized
+      offset: 178
+      type: REAL
+      unit: ""
+      description: 第三路电机输出归一化值
+
+# ============================================================
+# 数据分组 (便于前端显示和API使用)
+# ============================================================
+data_groups:
+  motor_outputs:
+    description: 电机输出
+    fields:
+      - motor_output_1
+      - motor_output_2
+      - motor_output_3
+      - motor_output_spare
+
+  arc_current:
+    description: 弧流数据 (UVW三相)
+    fields:
+      - arc_current_U_scale
+      - arc_current_V_scale
+      - arc_current_W_scale
+      - arc_current_setpoint_U   # U相弧流设定值 (offset 32)
+      - arc_current_setpoint_V   # V相弧流设定值 (offset 36)
+      - arc_current_setpoint_W   # W相弧流设定值 (offset 40)
+      - manual_deadzone_percent  # 手动死区百分比 (offset 48)
+
+  arc_voltage:
+    description: 弧压数据 (UVW三相)
+    fields:
+      - arc_voltage_U_scale
+      - arc_voltage_V_scale
+      - arc_voltage_W_scale

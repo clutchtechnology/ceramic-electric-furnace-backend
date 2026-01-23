@@ -16,12 +16,13 @@ class FurnaceConverter:
     def __init__(self):
         pass
         
-    def convert_to_points(self, parsed_data: Dict[str, Any], timestamp: datetime) -> List[Dict[str, Any]]:
+    def convert_to_points(self, parsed_data: Dict[str, Any], timestamp: datetime, batch_code: str = None) -> List[Dict[str, Any]]:
         """将解析后的数据转换为 InfluxDB Point 字典列表
         
         Args:
             parsed_data: parser_modbus.parse_all() 的返回结果
             timestamp: 数据生成时间
+            batch_code: 批次号 (用于追踪冶炼轮次)
             
         Returns:
             points: 用于 InfluxDB 写入的字典列表 (measurement, tags, fields, time)
@@ -35,6 +36,10 @@ class FurnaceConverter:
             'factory_area': 'L3'
         }
         
+        # 添加批次号 tag
+        if batch_code:
+            base_tags['batch_code'] = batch_code
+        
         # --------------------------------------------------------
         # 电极深度 (InfraredDistance)
         # --------------------------------------------------------
@@ -45,6 +50,11 @@ class FurnaceConverter:
         }
         for name, data in parsed_data.get('electrode_depths', {}).items():
             if name in electrode_map:
+                # 计算高低字 (如果需要兼容旧有的字段)
+                distance_val = data.get('distance', 0) or 0
+                high_word = (distance_val >> 16) & 0xFFFF
+                low_word = distance_val & 0xFFFF
+                
                 points.append({
                     'measurement': 'sensor_data',
                     'tags': {
@@ -55,14 +65,15 @@ class FurnaceConverter:
                     },
                     'fields': {
                         'distance_mm': data['distance'],
-                        'high_word': data['high'],
-                        'low_word': data['low']
+                        'high_word': high_word,
+                        'low_word': low_word
                     },
                     'time': timestamp
                 })
                 
         # --------------------------------------------------------
         # 冷却水压力 (PressureSensor)
+        # 单位: kPa (转换系数 0.01)
         # --------------------------------------------------------
         pressure_map = {
             'WATER_PRESS_1': 'cooling_water_in',
@@ -80,7 +91,7 @@ class FurnaceConverter:
                     'plc_variable': name
                 },
                 'fields': {
-                    'value': data['pressure'],
+                    'value': data['pressure'],  # kPa
                     'raw': data['raw']
                 },
                 'time': timestamp
@@ -88,6 +99,7 @@ class FurnaceConverter:
 
         # --------------------------------------------------------
         # 冷却水流量 (FlowSensor)
+        # 单位: m³/h (转换系数 1.0)
         # --------------------------------------------------------
         flow_map = {
             'WATER_FLOW_1': 'cooling_line_1',
@@ -105,37 +117,34 @@ class FurnaceConverter:
                     'plc_variable': name
                 },
                 'fields': {
-                    'value': data['flow'],
+                    'value': data['flow'],  # m³/h
                     'raw': data['raw']
                 },
                 'time': timestamp
             })
 
         # --------------------------------------------------------
-        # 蝶阀控制状态 (ValveControl)
+        # 蝶阀状态监测 (ValveStatusMonitor)
         # --------------------------------------------------------
-        # Ctrl_1 ~ Ctrl_4 对应 8个蝶阀? 
-        # 根据 Config: 
-        #   Ctrl_1 -> 蝶阀1-2
-        #   Ctrl_2 -> 蝶阀3-4 ...
-        # Parser中 `parse_valve_control` 返回 open/close/busy bool值
-        # 这里仅存储 relay 状态
-        for name, data in parsed_data.get('valve_controls', {}).items():
-            points.append({
-                'measurement': 'sensor_data',
-                'tags': {
-                    **base_tags,
-                    'module_type': 'valve_control',
-                    'relay_group': name,
-                    'plc_variable': name
-                },
-                'fields': {
-                    'open': int(data['open']),
-                    'close': int(data['close']),
-                    'busy': int(data['busy']),
-                    'raw': data['raw']
-                },
-                'time': timestamp
-            })
+        # 暂时不写入 InfluxDB，仅存内存缓存供 API 读取
+        # valve_status = parsed_data.get('valve_status', {})
+        # if valve_status:
+        #     points.append({
+        #         'measurement': 'sensor_data',
+        #         'tags': {
+        #             **base_tags,
+        #             'module_type': 'valve_status',
+        #             'plc_variable': 'ValveStatus'
+        #         },
+        #         'fields': {
+        #             'status_byte': valve_status.get('status_byte', 0),
+        #             'valve_1_state': valve_status.get('valve_1_state', 'STOPPED'),
+        #             'valve_2_state': valve_status.get('valve_2_state', 'STOPPED'),
+        #             'valve_3_state': valve_status.get('valve_3_state', 'STOPPED'),
+        #             'valve_4_state': valve_status.get('valve_4_state', 'STOPPED'),
+        #             'open_count': valve_status.get('open_count', 0)
+        #         },
+        #         'time': timestamp
+        #     })
             
         return points

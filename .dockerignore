@@ -1,0 +1,84 @@
+# ============================================================
+# Docker Build 忽略文件
+# 减少构建上下文大小，加快构建速度
+# ============================================================
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Windows Python packages (只需要 Linux 包)
+python_packages/
+
+# Deploy 目录 (历史版本)
+deploy/
+
+# Data 目录 (运行时数据)
+data/
+
+# Tests
+tests/
+test_*.py
+
+# Logs
+*.log
+logs/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.docker/
+
+# Other
+*.bak
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db

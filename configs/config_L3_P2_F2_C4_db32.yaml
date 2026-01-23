@@ -1,0 +1,156 @@
+# ============================================================
+# 电炉上位机
+# 配置文件: L3_P2_F2_C4 (3红外测距 + 2压力计 + 2流量计 + 4蝶阀)
+# 适用场景: 电炉车间监控系统
+# 模块定义引用
+module_definitions: "plc_modules.yaml"
+
+# 系统概述
+system:
+  name: 电炉车间上位机
+  version: "1.0"
+  description: L3_P2_F2_C4 配置 (3红外+ 2压力计 + 2流量计 + 4蝶阀)
+
+# ============================================================
+# DB32 - MODBUS_DATA_VALUE 数据块定义
+# PLC: CPU 1214C AC/DC/Rly
+# 包含: 3红外测距 + 2压力计 + 2流量计 + 1蝶阀状态监测
+# ============================================================
+# Size Calculation (重要!):
+#   - LENTH1 (UDInt): offset 0, 4 bytes
+#   - LENTH2 (UDInt): offset 4, 4 bytes
+#   - LENTH3 (UDInt): offset 8, 4 bytes
+#   - WATER_PRESS_1 (Int): offset 12, 2 bytes
+#   - WATER_PRESS_2 (Int): offset 14, 2 bytes
+#   - WATER_FLOW_1 (Int): offset 16, 2 bytes
+#   - WATER_FLOW_2 (Int): offset 18, 2 bytes
+#   - 蝶阀状态监测 (Byte): offset 20, 1 byte
+#   - 总大小: 21 bytes
+# ============================================================
+db32_modbus:
+  db_block: 32
+  name: MODBUS_DATA_VALUE
+  total_size: 21  # 实际地址 0~20, 共 21 字节
+  
+  modules:
+    # ----------------------
+    # 红外测距 (3个电极深度)
+    # 数据类型: UDInt (无符号32位整数, 4字节)
+    # fields 定义引用自 plc_modules.yaml -> InfraredDistance
+    # ----------------------
+    - name: LENTH1
+      module_ref: InfraredDistance
+      offset: 0
+      description: 1号电极红外测距
+          
+    - name: LENTH2
+      module_ref: InfraredDistance
+      offset: 4
+      description: 2号电极红外测距
+          
+    - name: LENTH3
+      module_ref: InfraredDistance
+      offset: 8
+      description: 3号电极红外测距
+
+    # ----------------------
+    # 压力计 (2个冷却水压力)
+    # 数据类型: Int (有符号16位整数, 2字节)
+    # 转换: 原始值 × 0.01 → kPa (水压×0.1效果)
+    # fields 定义引用自 plc_modules.yaml -> PressureSensor
+    # ----------------------
+    - name: WATER_PRESS_1
+      module_ref: PressureSensor
+      offset: 12
+      description: 前置过滤器进口压力 (炉皮侧, PLC地址3, 单位kPa)
+          
+    - name: WATER_PRESS_2
+      module_ref: PressureSensor
+      offset: 14
+      description: 前置过滤器出口压力 (炉盖侧, PLC地址4, 单位kPa)
+
+    # ----------------------
+    # 流量计 (2个冷却水流量)
+    # 数据类型: Int (有符号16位整数, 2字节)
+    # 转换: 原始值 × 1.0 → m³/h (流速×10效果)
+    # fields 定义引用自 plc_modules.yaml -> FlowSensor
+    # ----------------------
+    - name: WATER_FLOW_1
+      module_ref: FlowSensor
+      offset: 16
+      description: 炉皮冷却水流量 (PLC地址12)
+          
+    - name: WATER_FLOW_2
+      module_ref: FlowSensor
+      offset: 18
+      description: 炉盖冷却水流量 (PLC地址14)
+
+    # ----------------------
+    # 蝶阀状态监测 (Byte类型, 8位检测4个蝶阀)
+    # 数据类型: Byte (1字节, 每2个bit对应一个蝶阀的开关状态)
+    # Valve 1: bit0(关), bit1(开)
+    # Valve 2: bit2(关), bit3(开)
+    # Valve 3: bit4(关), bit5(开)
+    # Valve 4: bit6(关), bit7(开)
+    # fields 定义引用自 plc_modules.yaml -> ValveStatusMonitor
+    # ----------------------
+    - name: ValveStatus
+      module_ref: ValveStatusMonitor
+      offset: 20
+      description: 蝶阀状态监测 (Byte, 2bit一组检测4个蝶阀状态)
+
+# ============================================================
+# 1. 电炉配置 (3台) - 关联DB32数据
+# ============================================================
+furnaces:
+  - device_id: furnace_1
+    name: 1号电炉
+    db_block: 32
+    description: 使用DB32的MODBUS_DATA_VALUE
+    modules:
+      # 电极深度 - 使用红外测距
+      - name: electrode_depth
+        type: InfraredDistance
+        source: db32_modbus
+        mapping:
+          - LENTH1  # 1号电极
+          - LENTH2  # 2号电极
+          - LENTH3  # 3号电极
+        description: 3根电极进入深度 (红外测距)
+        
+      # 冷却水压力
+      - name: cooling_pressure
+        type: PressureSensor
+        source: db32_modbus
+        mapping:
+          - WATER_PRESS_1
+          - WATER_PRESS_2
+        description: 冷却水压力 (2路)
+        
+      # 冷却水流量
+      - name: cooling_flow
+        type: FlowSensor
+        source: db32_modbus
+        mapping:
+          - WATER_FLOW_1
+          - WATER_FLOW_2
+        description: 冷却水流量 (2路)
+        
+      # 蝶阀控制
+      - name: butterfly_valves
+        type: ValveControl
+        source: db32_modbus
+        mapping:
+          - Ctrl_1  # 蝶阀1-2
+          - Ctrl_2  # 蝶阀3-4
+          - Ctrl_3  # 蝶阀5-6
+          - Ctrl_4  # 蝶阀7-8
+        write_array: MBrly
+        description: 4路蝶阀控制 (共8个继电器)
+
+# 7. 数据刷新配置
+# ============================================================
+refresh:
+  realtime_interval: 5       # 实时数据刷新间隔 (秒)
+  max_delay: 3               # 最大显示延迟 (秒)
+  history_batch_write: 30    # 历史数据批量写入间隔 (轮询次数)

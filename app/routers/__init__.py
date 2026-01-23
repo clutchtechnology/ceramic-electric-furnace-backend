@@ -1,4 +1,4 @@
 # API路由
-from .api import api_router
+# 注意: 各路由模块由 main.py 直接导入，避免循环导入问题
 
-__all__ = ["api_router"]
+__all__ = []

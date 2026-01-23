@@ -34,7 +34,7 @@ class ModbusDataParser:
             config_path: 设备配置文件路径
             module_path: 基础模块配置文件路径
         """
-        self.config_path = Path(config_path) if config_path else self.PROJECT_ROOT / "configs" / "config_L3_P2_F2_C4.yaml"
+        self.config_path = Path(config_path) if config_path else self.PROJECT_ROOT / "configs" / "config_L3_P2_F2_C4_db32.yaml"
         self.module_path = Path(module_path) if module_path else self.PROJECT_ROOT / "configs" / "plc_modules.yaml"
         
         self.config: Dict = {}

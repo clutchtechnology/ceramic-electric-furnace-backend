@@ -1,0 +1,464 @@
+# ============================================================
+# 文件说明: batch_service.py - 批次状态管理服务（单例模式）
+# ============================================================
+# 功能:
+#   1. 维护全局冶炼状态 (is_smelting)
+#   2. 维护当前批次编号 (batch_code)
+#   3. 支持暂停/恢复冶炼（保留批次号）
+#   4. 断电恢复保护（状态持久化到文件）
+# ============================================================
+
+import json
+import os
+from datetime import datetime
+from typing import Optional
+from enum import Enum
+import threading
+
+
+# 计算项目根目录的绝对路径 (避免工作目录变化导致路径问题)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
+
+
+class SmeltingState(str, Enum):
+    """冶炼状态枚举"""
+    IDLE = "idle"           # 空闲（未开始冶炼）
+    RUNNING = "running"     # 运行中（正在冶炼）
+    PAUSED = "paused"       # 暂停（保留批次号）
+    STOPPED = "stopped"     # 停止（批次结束）
+
+
+class BatchService:
+    """批次状态管理服务 - 单例模式"""
+    
+    _instance: Optional['BatchService'] = None
+    _lock = threading.Lock()
+    
+    # 状态持久化文件路径 (使用绝对路径)
+    STATE_FILE = os.path.join(_DATA_DIR, "batch_state.json")
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self._initialized = True
+        self._state = SmeltingState.IDLE
+        self._batch_code: Optional[str] = None
+        self._last_batch_code: Optional[str] = None  # 上次停止的批次号（用于续炼判断）
+        self._start_time: Optional[datetime] = None
+        self._pause_time: Optional[datetime] = None
+        self._total_pause_duration: float = 0.0  # 累计暂停时长（秒）
+        
+        # 确保 data 目录存在
+        os.makedirs(_DATA_DIR, exist_ok=True)
+        
+        # 尝试从文件恢复状态（断电保护）
+        self._load_state_from_file()
+    
+    # ============================================================
+    # 属性访问器
+    # ============================================================
+    
+    @property
+    def state(self) -> SmeltingState:
+        """获取当前冶炼状态"""
+        return self._state
+    
+    @property
+    def is_smelting(self) -> bool:
+        """是否正在冶炼（运行中或暂停中都算）"""
+        return self._state in (SmeltingState.RUNNING, SmeltingState.PAUSED)
+    
+    @property
+    def is_running(self) -> bool:
+        """是否正在运行（只有运行中才写数据库）"""
+        return self._state == SmeltingState.RUNNING
+    
+    @property
+    def batch_code(self) -> Optional[str]:
+        """获取当前批次编号"""
+        return self._batch_code
+    
+    @property
+    def start_time(self) -> Optional[datetime]:
+        """获取冶炼开始时间"""
+        return self._start_time
+    
+    @property
+    def elapsed_seconds(self) -> float:
+        """获取有效冶炼时长（排除暂停时间）"""
+        if not self._start_time:
+            return 0.0
+        
+        total = (datetime.now() - self._start_time).total_seconds()
+        
+        # 如果当前是暂停状态，减去当前暂停时长
+        if self._state == SmeltingState.PAUSED and self._pause_time:
+            current_pause = (datetime.now() - self._pause_time).total_seconds()
+            total -= current_pause
+        
+        return total - self._total_pause_duration
+    
+    # ============================================================
+    # 状态控制方法
+    # ============================================================
+    
+    def start(self, batch_code: str) -> dict:
+        """
+        开始冶炼
+        
+        Args:
+            batch_code: 批次编号 (格式: FFYYMMDD 如 03260123)
+            
+        Returns:
+            {"success": bool, "message": str, "batch_code": str}
+        """
+        if self._state == SmeltingState.RUNNING:
+            return {
+                "success": False,
+                "message": f"冶炼已在进行中，批次号: {self._batch_code}",
+                "batch_code": self._batch_code
+            }
+        
+        if self._state == SmeltingState.PAUSED:
+            return {
+                "success": False,
+                "message": f"存在暂停中的批次: {self._batch_code}，请先停止或恢复",
+                "batch_code": self._batch_code
+            }
+        
+        # 判断是否续炼（相同批次号再次开始）
+        is_resuming_same_batch = (self._last_batch_code == batch_code)
+        
+        # 设置新批次
+        self._batch_code = batch_code
+        self._state = SmeltingState.RUNNING
+        self._start_time = datetime.now()
+        self._pause_time = None
+        self._total_pause_duration = 0.0
+        
+        if is_resuming_same_batch:
+            # 相同批次号：续炼模式，从数据库恢复累计值
+            print(f"🔄 续炼模式：批次号 {batch_code} 与上次相同，恢复累计值...")
+            self._restore_accumulators_from_db(batch_code)
+        else:
+            # 新批次号：重置累计器
+            print(f"🆕 新批次模式：重置累计器...")
+            self._reset_accumulators(batch_code)
+        
+        # 持久化状态
+        self._save_state_to_file()
+        
+        return {
+            "success": True,
+            "message": f"冶炼开始，批次号: {batch_code}",
+            "batch_code": batch_code,
+            "start_time": self._start_time.isoformat()
+        }
+    
+    def _reset_accumulators(self, batch_code: str):
+        """重置累计器（新批次时调用）"""
+        # 重置冷却水累计流量
+        try:
+            from app.services.cooling_water_calculator import get_cooling_water_calculator
+            cooling_calc = get_cooling_water_calculator()
+            cooling_calc.reset_for_new_batch(batch_code)
+        except Exception as e:
+            print(f"⚠️ 重置冷却水累计流量失败: {e}")
+        
+        # 重置投料累计器
+        try:
+            from app.services.feeding_accumulator import get_feeding_accumulator
+            feeding_acc = get_feeding_accumulator()
+            feeding_acc.reset_for_new_batch(batch_code)
+        except Exception as e:
+            print(f"⚠️ 重置投料累计器失败: {e}")
+    
+    def _restore_accumulators_from_db(self, batch_code: str):
+        """从数据库恢复累计值（续炼时调用）"""
+        try:
+            from app.core.influxdb import get_influxdb_client
+            from config import get_settings
+            
+            settings = get_settings()
+            influx = get_influxdb_client()
+            
+            print(f"🔍 开始查询批次 {batch_code} 的累计值...")
+            
+            # 查询该批次的最新累计值
+            # 注意: 字段名要与 polling_data_processor.py 中写入时的名称一致
+            # - feeding_total: 投料累计 (module_type=hopper_weight)
+            # - furnace_cover_water_total: 炉盖冷却水累计 (module_type=cooling_water_total)
+            # - furnace_shell_water_total: 炉皮冷却水累计 (module_type=cooling_water_total)
+            query = f'''
+                from(bucket: "{settings.influxdb_bucket}")
+                    |> range(start: -7d)
+                    |> filter(fn: (r) => r["_measurement"] == "sensor_data")
+                    |> filter(fn: (r) => r["batch_code"] == "{batch_code}")
+                    |> filter(fn: (r) => 
+                        r["_field"] == "feeding_total" or 
+                        r["_field"] == "furnace_cover_water_total" or 
+                        r["_field"] == "furnace_shell_water_total"
+                    )
+                    |> last()
+            '''
+            
+            print(f"📝 执行查询: bucket={settings.influxdb_bucket}, batch_code={batch_code}")
+            result = influx.query_api().query(query)
+            
+            feeding_total = 0.0
+            cover_total = 0.0
+            shell_total = 0.0
+            records_found = 0
+            
+            for table in result:
+                for record in table.records:
+                    records_found += 1
+                    field = record.get_field()
+                    value = record.get_value()
+                    print(f"   📌 找到记录: field={field}, value={value}")
+                    if field == "feeding_total":
+                        feeding_total = float(value) if value else 0.0
+                    elif field == "furnace_cover_water_total":
+                        cover_total = float(value) if value else 0.0
+                    elif field == "furnace_shell_water_total":
+                        shell_total = float(value) if value else 0.0
+            
+            print(f"📊 查询结果: 共{records_found}条记录, 投料={feeding_total:.1f}kg, 炉盖水={cover_total:.3f}m³, 炉皮水={shell_total:.3f}m³")
+            
+            # 恢复投料累计
+            if feeding_total > 0:
+                from app.services.feeding_accumulator import get_feeding_accumulator
+                feeding_acc = get_feeding_accumulator()
+                feeding_acc._current_batch_code = batch_code
+                feeding_acc.set_feeding_total(feeding_total)
+                print(f"📥 投料累计已恢复: {feeding_total:.1f}kg")
+            else:
+                print(f"⚠️ 未找到投料累计数据")
+            
+            # 恢复冷却水累计
+            if cover_total > 0 or shell_total > 0:
+                from app.services.cooling_water_calculator import get_cooling_water_calculator
+                cooling_calc = get_cooling_water_calculator()
+                cooling_calc._current_batch_code = batch_code
+                cooling_calc._furnace_cover_total_volume = cover_total
+                cooling_calc._furnace_shell_total_volume = shell_total
+                print(f"📥 冷却水累计已恢复: 炉盖={cover_total:.3f}m³, 炉皮={shell_total:.3f}m³")
+            else:
+                print(f"⚠️ 未找到冷却水累计数据")
+            
+            print(f"✅ 续炼累计值恢复完成 (批次: {batch_code})")
+            
+        except Exception as e:
+            print(f"⚠️ 从数据库恢复累计值失败: {e}")
+            import traceback
+            traceback.print_exc()
+            # 恢复失败时降级为重置
+            print(f"⚠️ 降级为重置模式...")
+            self._reset_accumulators(batch_code)
+    
+    def pause(self) -> dict:
+        """
+        暂停冶炼（保留批次号，不写数据库）
+        
+        Returns:
+            {"success": bool, "message": str}
+        """
+        if self._state != SmeltingState.RUNNING:
+            return {
+                "success": False,
+                "message": f"当前状态不支持暂停: {self._state.value}"
+            }
+        
+        self._state = SmeltingState.PAUSED
+        self._pause_time = datetime.now()
+        
+        # 持久化状态
+        self._save_state_to_file()
+        
+        return {
+            "success": True,
+            "message": f"冶炼已暂停，批次号: {self._batch_code}",
+            "batch_code": self._batch_code,
+            "pause_time": self._pause_time.isoformat()
+        }
+    
+    def resume(self) -> dict:
+        """
+        恢复冶炼（从暂停状态恢复）
+        
+        Returns:
+            {"success": bool, "message": str}
+        """
+        if self._state != SmeltingState.PAUSED:
+            return {
+                "success": False,
+                "message": f"当前状态不支持恢复: {self._state.value}"
+            }
+        
+        # 累加暂停时长
+        if self._pause_time:
+            pause_duration = (datetime.now() - self._pause_time).total_seconds()
+            self._total_pause_duration += pause_duration
+        
+        self._state = SmeltingState.RUNNING
+        self._pause_time = None
+        
+        # 持久化状态
+        self._save_state_to_file()
+        
+        return {
+            "success": True,
+            "message": f"冶炼已恢复，批次号: {self._batch_code}",
+            "batch_code": self._batch_code,
+            "total_pause_duration": self._total_pause_duration
+        }
+    
+    def stop(self) -> dict:
+        """
+        停止冶炼（结束批次）
+        
+        Returns:
+            {"success": bool, "message": str, "summary": dict}
+        """
+        if self._state == SmeltingState.IDLE:
+            return {
+                "success": False,
+                "message": "当前没有进行中的冶炼"
+            }
+        
+        # 记录结束信息
+        summary = {
+            "batch_code": self._batch_code,
+            "start_time": self._start_time.isoformat() if self._start_time else None,
+            "end_time": datetime.now().isoformat(),
+            "elapsed_seconds": self.elapsed_seconds,
+            "total_pause_duration": self._total_pause_duration
+        }
+        
+        # 保存上次批次号（用于续炼判断）
+        old_batch = self._batch_code
+        self._last_batch_code = old_batch
+        
+        # 重置状态
+        self._state = SmeltingState.IDLE
+        self._batch_code = None
+        self._start_time = None
+        self._pause_time = None
+        self._total_pause_duration = 0.0
+        
+        # 持久化状态（清除）
+        self._save_state_to_file()
+        
+        return {
+            "success": True,
+            "message": f"冶炼已停止，批次号: {old_batch}",
+            "summary": summary
+        }
+    
+    def get_status(self) -> dict:
+        """
+        获取当前状态（用于前端轮询和断电恢复）
+        
+        Returns:
+            完整的状态信息
+        """
+        return {
+            "state": self._state.value,
+            "is_smelting": self.is_smelting,
+            "is_running": self.is_running,
+            "batch_code": self._batch_code,
+            "start_time": self._start_time.isoformat() if self._start_time else None,
+            "pause_time": self._pause_time.isoformat() if self._pause_time else None,
+            "elapsed_seconds": self.elapsed_seconds,
+            "total_pause_duration": self._total_pause_duration
+        }
+    
+    # ============================================================
+    # 状态持久化（断电保护）
+    # ============================================================
+    
+    def _save_state_to_file(self):
+        """保存状态到文件（断电保护）"""
+        try:
+            # 确保目录存在
+            os.makedirs(os.path.dirname(self.STATE_FILE), exist_ok=True)
+            
+            state_data = {
+                "state": self._state.value,
+                "batch_code": self._batch_code,
+                "last_batch_code": self._last_batch_code,  # 保存上次批次号
+                "start_time": self._start_time.isoformat() if self._start_time else None,
+                "pause_time": self._pause_time.isoformat() if self._pause_time else None,
+                "total_pause_duration": self._total_pause_duration,
+                "saved_at": datetime.now().isoformat()
+            }
+            
+            with open(self.STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(state_data, f, ensure_ascii=False, indent=2)
+            
+            print(f"[BatchService] 状态已保存: {self._state.value}, batch={self._batch_code}")
+            
+        except Exception as e:
+            print(f"[BatchService] 保存状态失败: {e}")
+    
+    def _load_state_from_file(self):
+        """从文件恢复状态（断电恢复）"""
+        try:
+            if not os.path.exists(self.STATE_FILE):
+                print("[BatchService] 无历史状态文件，使用默认状态")
+                return
+            
+            with open(self.STATE_FILE, 'r', encoding='utf-8') as f:
+                state_data = json.load(f)
+            
+            # 恢复状态
+            saved_state = state_data.get("state", "idle")
+            
+            # 如果之前是运行中或暂停中，恢复为暂停状态（安全起见）
+            if saved_state in ("running", "paused"):
+                self._state = SmeltingState.PAUSED  # 恢复后默认暂停
+                self._batch_code = state_data.get("batch_code")
+                self._last_batch_code = state_data.get("last_batch_code")  # 恢复上次批次号
+                
+                if state_data.get("start_time"):
+                    self._start_time = datetime.fromisoformat(state_data["start_time"])
+                
+                self._total_pause_duration = state_data.get("total_pause_duration", 0.0)
+                self._pause_time = datetime.now()  # 从现在开始计算暂停
+                
+                print(f"[BatchService] 🔄 断电恢复: 批次={self._batch_code}, 状态=paused")
+                print(f"[BatchService]    原状态={saved_state}, 已运行={self.elapsed_seconds:.0f}秒")
+            else:
+                # 空闲状态也恢复 last_batch_code（用于续炼判断）
+                self._last_batch_code = state_data.get("last_batch_code")
+                if self._last_batch_code:
+                    print(f"[BatchService] 历史状态为空闲，上次批次号: {self._last_batch_code}")
+                else:
+                    print("[BatchService] 历史状态为空闲，无需恢复")
+                
+        except Exception as e:
+            print(f"[BatchService] 恢复状态失败: {e}")
+
+
+# ============================================================
+# 全局单例获取函数
+# ============================================================
+
+_batch_service: Optional[BatchService] = None
+
+def get_batch_service() -> BatchService:
+    """获取批次服务单例"""
+    global _batch_service
+    if _batch_service is None:
+        _batch_service = BatchService()
+    return _batch_service

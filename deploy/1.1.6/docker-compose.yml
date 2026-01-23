@@ -1,0 +1,77 @@
+services:
+  # InfluxDB 时序数据库
+  influxdb:
+    image: influxdb:2.7
+    container_name: furnace-influxdb
+    restart: unless-stopped
+    ports:
+      - '8089:8086'
+    volumes:
+      - D:/docker-data/furnace/influxdb-data:/var/lib/influxdb2
+      - D:/docker-data/furnace/influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin_password
+      - DOCKER_INFLUXDB_INIT_ORG=furnace
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensor_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=furnace-token
+    networks:
+      - furnace-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # ============================================================
+  # 电炉后端 v1.1.6 (生产模式 - 串口直接映射)
+  # ============================================================
+  # 关键改动:
+  #   - 使用 --privileged 模式映射宿主机串口
+  #   - COM1 在 WSL2 中映射为 /dev/ttyS0
+  #   - 不再需要串口网桥
+  # ============================================================
+  backend:
+    image: furnace-backend:1.1.6
+    container_name: furnace-backend
+    restart: unless-stopped
+    privileged: true  # 必须！WSL2环境下访问串口需要特权模式
+    depends_on:
+      - influxdb
+    ports:
+      - '8082:8082'
+    volumes:
+      - D:/docker-data/furnace/app-data:/app/data
+      - /dev/ttyS0:/dev/ttyS0  # 串口映射 (COM1 -> /dev/ttyS0)
+    environment:
+      - PYTHONUNBUFFERED=1
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=furnace-token
+      - INFLUX_ORG=furnace
+      - INFLUX_BUCKET=sensor_data
+      - SERVER_PORT=8082
+      # ============================================================
+      # 生产环境配置 (非 Mock 模式)
+      # ============================================================
+      - MOCK_MODE=false
+      - USE_MOCK_DATA=false
+      - ENABLE_POLLING=true
+      # ============================================================
+      # PLC 连接参数 (S7-1200)
+      # ============================================================
+      - PLC_IP=192.168.1.10
+      - PLC_PORT=102
+      - PLC_RACK=0
+      - PLC_SLOT=1
+      # ============================================================
+      # Modbus RTU 配置 (串口直接映射)
+      # Windows COM1 -> WSL2 /dev/ttyS0
+      # ============================================================
+      - MODBUS_PORT=/dev/ttyS0
+      - MODBUS_BAUDRATE=19200
+    networks:
+      - furnace-network
+
+networks:
+  furnace-network:
+    driver: bridge

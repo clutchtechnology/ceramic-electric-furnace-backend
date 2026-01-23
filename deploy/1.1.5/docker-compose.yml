@@ -1,0 +1,63 @@
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: furnace-influxdb
+    restart: unless-stopped
+    ports:
+      - "8089:8086"
+    volumes:
+      - D:/docker-data/furnace/influxdb-data:/var/lib/influxdb2
+      - D:/docker-data/furnace/influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin_password
+      - DOCKER_INFLUXDB_INIT_ORG=furnace
+      - DOCKER_INFLUXDB_INIT_BUCKET=sensor_data
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=furnace-token
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # ============================================================
+  # 电炉后端 v1.1.5
+  # ============================================================
+  # 新增功能:
+  #   - DB41 数据状态解析修复 (28字节)
+  #   - 料仓重量 Modbus RTU 读取
+  #   - 串口网桥后台服务
+  # ============================================================
+  backend:
+    image: furnace-backend:1.1.5
+    container_name: furnace-backend
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    ports:
+      - "8082:8082"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=furnace-token
+      - INFLUX_ORG=furnace
+      - INFLUX_BUCKET=sensor_data
+      - SERVER_PORT=8082
+      # ============================================================
+      # 生产环境配置
+      # ============================================================
+      - MOCK_MODE=false
+      - ENABLE_POLLING=true
+      # ============================================================
+      # PLC 连接参数 (S7-1200)
+      # ============================================================
+      - PLC_IP=192.168.1.10
+      - PLC_PORT=102
+      - PLC_RACK=0
+      - PLC_SLOT=1
+      # ============================================================
+      # Modbus RTU 配置 (料仓重量)
+      # 通过串口网桥访问宿主机 COM1
+      # ============================================================
+      - MODBUS_PORT=socket://host.docker.internal:7777
+      - MODBUS_BAUDRATE=19200

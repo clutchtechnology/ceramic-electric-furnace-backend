@@ -9,11 +9,11 @@ db_blocks:
   # DB30 - Modbus 通信状态
   - db_number: 30
     db_name: "MODBUS_DB_Value"
-    size: 40
+    size: 32
     type: "status"
     description: "Modbus Master 通信状态"
     parser: "ModbusStatusParser"
-    config_file: "status_L3_P2_F2_C4.yaml"
+    config_file: "status_L3_P2_F2_C4_db30.yaml"
     store_to_db: false  # 只缓存，不写入数据库
     
   # DB32 - Modbus 传感器数据
@@ -23,8 +23,41 @@ db_blocks:
     type: "data"
     description: "Modbus 传感器数据 (测距/压力/流量/蝶阀)"
     parser: "ModbusDataParser"
-    config_file: "config_L3_P2_F2_C4.yaml"
+    config_file: "config_L3_P2_F2_C4_db32.yaml"
     store_to_db: true  # 写入 InfluxDB
+    
+  # DB33 - 电表数据
+  - db_number: 33
+    db_name: "ELECTRICITY_DATA"
+    size: 56  # 14 REAL × 4 bytes
+    type: "data"
+    description: "三相电表数据 (电压/电流/功率/电能)"
+    parser: "ElectricityParser"
+    config_file: "config_electricity_db33.yaml"
+    store_to_db: true  # 写入 InfluxDB
+    ct_ratio: 20  # 电流互感器变比
+
+  # DB33 - 电表数据
+  - db_number: 33
+    db_name: "ELECTRICITY_DATA"
+    size: 56  # 14 REAL × 4 bytes
+    type: "data"
+    description: "三相电表数据 (电压/电流/功率/电能)"
+    parser: "ConfigDrivenDB33Parser"
+    config_file: "config_electricity_db33.yaml"
+    store_to_db: true  # 写入 InfluxDB
+    ct_ratio: 20  # 电流互感器变比
+
+  # DB41 - 数据状态 (DataState)
+  - db_number: 41
+    db_name: "DataState"
+    size: 28  # 7 个设备 × 4 bytes
+    type: "status"
+    description: "传感器数据有效性状态"
+    parser: "DataStateParser"
+    config_file: "status_db41.yaml"
+    store_to_db: false
+
 
 # 轮询配置
 polling:
