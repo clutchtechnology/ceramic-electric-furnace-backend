@@ -175,9 +175,15 @@ async def get_realtime_sensor():
     cooling_pressures = modbus_data.get('cooling_pressures', {})
     cooling_flows = modbus_data.get('cooling_flows', {})
     
-    # 投料总量 - 从投料累计器获取（实时累计重量变化）
+    # 【修改】累计流量和投料总量都从数据库查询
+    # 投料总量 - 从投料累计器获取（已修改为查询数据库）
     feeding_accumulator = get_feeding_accumulator()
     feeding_total_kg = feeding_accumulator.get_feeding_total()
+    
+    # 冷却水累计流量 - 从冷却水计算器获取（已修改为查询数据库）
+    from app.services.cooling_water_calculator import get_cooling_water_calculator
+    cooling_calc = get_cooling_water_calculator()
+    cooling_totals = cooling_calc.get_total_volumes()
     
     return {
         "success": True,
@@ -197,12 +203,12 @@ async def get_realtime_sensor():
                 "furnace_shell": {
                     "flow_m3h": extract_flow(cooling_flows.get('WATER_FLOW_1')),
                     "pressure_kPa": extract_pressure(cooling_pressures.get('WATER_PRESS_1')) * 1000,
-                    "total_m3": modbus_data.get('furnace_shell_total_volume', 0.0),
+                    "total_m3": cooling_totals.get('furnace_shell', 0.0),  # 【修改】从数据库查询
                 },
                 "furnace_cover": {
                     "flow_m3h": extract_flow(cooling_flows.get('WATER_FLOW_2')),
                     "pressure_kPa": extract_pressure(cooling_pressures.get('WATER_PRESS_2')) * 1000,
-                    "total_m3": modbus_data.get('furnace_cover_total_volume', 0.0),
+                    "total_m3": cooling_totals.get('furnace_cover', 0.0),  # 【修改】从数据库查询
                 },
                 # 进出口压差 = 炉皮水压 - 炉盖水压 (kPa)
                 "filter_pressure_diff_kPa": (extract_pressure(cooling_pressures.get('WATER_PRESS_1')) - extract_pressure(cooling_pressures.get('WATER_PRESS_2'))) * 1000,
@@ -210,7 +216,7 @@ async def get_realtime_sensor():
             # 料仓
             "hopper": {
                 "weight_kg": weight_data.get('weight', 0),
-                "feeding_total_kg": feeding_total_kg,
+                "feeding_total_kg": feeding_total_kg,  # 【修改】从数据库查询
                 "success": weight_data.get('success', False),
             },
             # 批次信息
@@ -250,9 +256,14 @@ async def get_realtime_batch():
     arc_data = arc_result.get('data', {})  # DB1 弧流弧压数据
     weight_data = weight_result.get('data', {})
     
-    # 获取当前批次的投料总量 - 从投料累计器获取（实时累计重量变化）
+    # 获取当前批次的投料总量 - 从投料累计器获取（已修改为查询数据库）
     feeding_accumulator = get_feeding_accumulator()
     feeding_total_kg = feeding_accumulator.get_feeding_total()
+    
+    # 【修改】冷却水累计流量 - 从冷却水计算器获取（已修改为查询数据库）
+    from app.services.cooling_water_calculator import get_cooling_water_calculator
+    cooling_calc = get_cooling_water_calculator()
+    cooling_totals = cooling_calc.get_total_volumes()
     
     # 解析 DB32 传感器数据
     # 红外测距 (电极深度)
@@ -360,13 +371,13 @@ async def get_realtime_batch():
             "furnace_shell": {
                 "flow_m3h": extract_flow(cooling_flows.get('WATER_FLOW_1')),  # 流速 m³/h (地址12)
                 "pressure_kPa": extract_pressure(cooling_pressures.get('WATER_PRESS_1')) * 1000,  # 过滤器进口压力 (kPa)
-                "total_m3": modbus_data.get('furnace_shell_total_volume', 0.0),  # 累计流量 m³
+                "total_m3": cooling_totals.get('furnace_shell', 0.0),  # 【修改】从数据库查询累计流量 m³
             },
             # 炉盖冷却水 (WATER_FLOW_2=流量, WATER_PRESS_2=过滤器出口压力)
             "furnace_cover": {
                 "flow_m3h": extract_flow(cooling_flows.get('WATER_FLOW_2')),  # 流速 m³/h (地址14)
                 "pressure_kPa": extract_pressure(cooling_pressures.get('WATER_PRESS_2')) * 1000,  # 过滤器出口压力 (kPa)
-                "total_m3": modbus_data.get('furnace_cover_total_volume', 0.0),  # 累计流量 m³
+                "total_m3": cooling_totals.get('furnace_cover', 0.0),  # 【修改】从数据库查询累计流量 m³
             },
             # 前置过滤器压差 = 炉皮水压 - 炉盖水压 (kPa)
             "filter_pressure_diff_kPa": (extract_pressure(cooling_pressures.get('WATER_PRESS_1')) - extract_pressure(cooling_pressures.get('WATER_PRESS_2'))) * 1000,

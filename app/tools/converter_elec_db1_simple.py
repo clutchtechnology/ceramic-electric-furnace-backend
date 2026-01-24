@@ -7,6 +7,35 @@
 #   3. 12个数据点：U/V/W弧流(3) + U/V/W弧压(3) + U/V/W弧流设定值(3) + 手动死区百分比(1) + 灵敏度(2保留)
 #   4. 单位：弧压V，弧流A，手动死区%
 # ============================================================
+# 【数据库写入说明 - DB1 弧流弧压数据】
+# ============================================================
+# Measurement: sensor_data
+# Tags:
+#   - device_type: electric_furnace
+#   - module_type: arc_data
+#   - device_id: electrode
+#   - batch_code: 批次号 (动态)
+# Fields (共10个数据点):
+# ============================================================
+# 基础字段 (每次轮询都写入):
+#   - arc_current_U: U相弧流 (A)
+#   - arc_current_V: V相弧流 (A)
+#   - arc_current_W: W相弧流 (A)
+#   - arc_voltage_U: U相弧压 (V)
+#   - arc_voltage_V: V相弧压 (V)
+#   - arc_voltage_W: W相弧压 (V)
+# ============================================================
+# 设定值字段 (仅在变化时写入):
+#   - arc_current_setpoint_U: U相弧流设定值 (A)
+#   - arc_current_setpoint_V: V相弧流设定值 (A)
+#   - arc_current_setpoint_W: W相弧流设定值 (A)
+#   - manual_deadzone_percent: 手动死区百分比 (%)
+# ============================================================
+# 写入逻辑:
+#   - 轮询间隔: 5秒(默认) / 0.2秒(冶炼中)
+#   - 批量写入: 20次轮询后写入 (4秒)
+#   - 变化检测: 设定值和死区仅在变化时才写入，减少存储量
+# ============================================================
 
 from typing import Dict, Any
 from dataclasses import dataclass
@@ -75,7 +104,7 @@ class ArcDataSimple:
 
 
 # ============================================================
-# 转换函数
+# 1: 数据转换函数模块
 # ============================================================
 
 def convert_db1_arc_data_simple(parsed_data: Dict[str, Any]) -> ArcDataSimple:
@@ -194,6 +223,9 @@ def convert_to_influx_fields_simple(arc_data: ArcDataSimple) -> Dict[str, float]
     }
 
 
+# ============================================================
+# 2: 变化检测转换模块
+# ============================================================
 def convert_to_influx_fields_with_change_detection(
     arc_data: ArcDataSimple, 
     prev_setpoints: tuple = None, 

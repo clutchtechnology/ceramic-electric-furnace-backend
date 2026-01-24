@@ -9,6 +9,42 @@
 #   5. 蝶阀状态队列管理
 #   6. 批量写入 InfluxDB
 # ============================================================
+# 【数据库写入说明】
+# ============================================================
+# 1: DB32 传感器数据 (写入 InfluxDB)
+#    - 轮询间隔: 0.5秒
+#    - 批量写入: 30次轮询后写入 (15秒)
+#    - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+#    - 数据点:
+#      * 电极深度: LENTH1/2/3 (distance_mm, high_word, low_word)
+#      * 冷却水压力: WATER_PRESS_1/2 (value kPa, raw)
+#      * 冷却水流量: WATER_FLOW_1/2 (value m³/h, raw)
+#      * 冷却水累计: furnace_shell_water_total, furnace_cover_water_total (每15秒计算)
+# ============================================================
+# 2: DB1 弧流弧压数据 (写入 InfluxDB)
+#    - 轮询间隔: 5秒(默认) / 0.2秒(冶炼中)
+#    - 批量写入: 20次轮询后写入 (4秒)
+#    - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+#    - 数据点:
+#      * 弧流: arc_current_U/V/W (A) - 每次写入
+#      * 弧压: arc_voltage_U/V/W (V) - 每次写入
+#      * 设定值: arc_current_setpoint_U/V/W (A) - 仅变化时写入
+#      * 死区: manual_deadzone_percent (%) - 仅变化时写入
+# ============================================================
+# 3: 料仓重量数据 (写入 InfluxDB)
+#    - 轮询间隔: 0.5秒 (与DB32同步)
+#    - 批量写入: 30次轮询后写入 (15秒)
+#    - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+#    - 数据点:
+#      * 净重: net_weight (kg)
+#      * 投料累计: feeding_total (kg) - 每30秒计算一次增量
+#      * 投料状态: is_discharging (0/1) - %Q3.7秤排料信号
+# ============================================================
+# 4: 不写入数据库的数据 (仅内存缓存)
+#    - DB30 通信状态 (ModbusStatusParser)
+#    - DB41 数据状态 (DataStateParser)
+#    - 蝶阀状态队列 (ValveStatusMonitor) - 仅用于历史记录API
+# ============================================================
 
 import threading
 import traceback
@@ -28,7 +64,6 @@ from app.tools.converter_elec_db1_simple import (
     convert_to_influx_fields_with_change_detection,
     ArcDataSimple,
 )
-from app.services.feeding_service import get_batch_feeding_total
 from app.services.feeding_accumulator import get_feeding_accumulator
 
 
@@ -124,7 +159,7 @@ _stats = {
 
 
 # ============================================================
-# 解析器初始化
+# 1: 解析器初始化模块
 # ============================================================
 def init_parsers():
     """初始化解析器"""
@@ -190,7 +225,7 @@ def get_parsers_dict():
 
 
 # ============================================================
-# 数据处理函数
+# 2: 数据处理函数模块
 # ============================================================
 def process_modbus_data(raw_data: bytes):
     """处理 DB32 传感器数据
@@ -348,6 +383,10 @@ def process_arc_data(raw_data: bytes, batch_code: str):
     
     if not _db1_parser:
         return
+    
+    # 只有有批次号时才处理数据（断电恢复后 batch_code 存在）
+    if not batch_code:
+        return
 
     try:
         # 1. 解析原始数据
@@ -392,27 +431,12 @@ def process_arc_data(raw_data: bytes, batch_code: str):
         )
         arc_fields = change_result['fields']
         
-        # 更新上一次的值
+        # 1: 更新上一次的值
         _prev_setpoints = change_result['current_setpoints']
         _prev_deadzone = change_result['current_deadzone']
-        
+
+        # 2: 写入弧流弧压数据 (不包含 feeding_total，该字段只在 hopper_weight 中)
         if arc_fields:
-            # 添加下料总量 (需要从批次信息获取 start_time)
-            try:
-                from app.services.polling_service import get_batch_info
-                batch_info = get_batch_info()
-                start_time_str = batch_info.get('start_time')
-                if start_time_str:
-                    from datetime import datetime as dt
-                    start_time = dt.fromisoformat(start_time_str)
-                    feeding_total = get_batch_feeding_total(batch_code, start_time)
-                else:
-                    feeding_total = 0.0
-            except Exception as feed_err:
-                print(f"⚠️ 获取投料总量失败: {feed_err}")
-                feeding_total = 0.0
-            arc_fields['feeding_total'] = feeding_total
-            
             point_dict = {
                 'measurement': 'sensor_data',
                 'tags': {
@@ -476,6 +500,10 @@ def process_db41_data(raw_data: bytes):
         print(f"❌ 处理 DB41 数据状态失败: {e}")
 
 
+# ============================================================
+# 3: 批量写入 InfluxDB 模块
+# ============================================================
+
 def process_weight_data(
     weight_result: Dict[str, Any],
     batch_code: str,
@@ -493,10 +521,14 @@ def process_weight_data(
     global _latest_weight_data, _latest_weight_timestamp
 
     try:
-        # 1. 更新内存缓存
+        # 1. 更新内存缓存 (始终更新，即使没有批次号)
         with _data_lock:
             _latest_weight_data = weight_result
             _latest_weight_timestamp = datetime.now()
+        
+        # 只有有批次号时才写入数据库
+        if not batch_code:
+            return
         
         # 2. 如果读取成功，处理投料累计
         if weight_result.get('success') and weight_result.get('weight') is not None:
@@ -554,19 +586,20 @@ def process_weight_data(
 async def flush_arc_buffer():
     """批量写入 DB1 弧流弧压缓存
     
-    注意: 只有在冶炼运行状态 (is_running=True) 时才写入数据库
+    注意: 只有在冶炼状态 (is_smelting=True) 时才写入数据库
+    断电恢复后状态为 running，会继续写入数据
     """
     global _stats, _arc_buffer
     
     if not _arc_buffer:
         return
     
-    # 检查批次状态 - 只有运行中才写数据库
+    # 检查批次状态 - 只有冶炼中（running 或 paused）才写数据库
     from app.services.batch_service import get_batch_service
     batch_service = get_batch_service()
     
-    if not batch_service.is_running:
-        # 暂停或未开始冶炼时，清空缓存但不写入
+    if not batch_service.is_smelting:
+        # 未开始冶炼时，清空缓存但不写入
         skipped_count = len(_arc_buffer)
         _arc_buffer.clear()
         if skipped_count > 0:
@@ -602,19 +635,20 @@ async def flush_arc_buffer():
 async def flush_normal_buffer():
     """批量写入 DB32/重量缓存
     
-    注意: 只有在冶炼运行状态 (is_running=True) 时才写入数据库
+    注意: 只有在冶炼状态 (is_smelting=True) 时才写入数据库
+    断电恢复后状态为 running，会继续写入数据
     """
     global _stats, _normal_buffer
     
     if not _normal_buffer:
         return
     
-    # 检查批次状态 - 只有运行中才写数据库
+    # 检查批次状态 - 只有冶炼中（running 或 paused）才写数据库
     from app.services.batch_service import get_batch_service
     batch_service = get_batch_service()
     
-    if not batch_service.is_running:
-        # 暂停或未开始冶炼时，清空缓存但不写入
+    if not batch_service.is_smelting:
+        # 未开始冶炼时，清空缓存但不写入
         skipped_count = len(_normal_buffer)
         _normal_buffer.clear()
         if skipped_count > 0:
@@ -648,7 +682,7 @@ async def flush_normal_buffer():
 
 
 # ============================================================
-# 缓存数据获取函数 (供 API 调用)
+# 4: 缓存数据获取函数模块 (供 API 调用)
 # ============================================================
 def get_latest_modbus_data() -> Dict[str, Any]:
     """获取最新的 DB32 传感器数据"""

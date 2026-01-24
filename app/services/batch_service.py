@@ -117,7 +117,7 @@ class BatchService:
         开始冶炼
         
         Args:
-            batch_code: 批次编号 (格式: FFYYMMDD 如 03260123)
+            batch_code: 批次编号 (格式: YYMMFFDD 如 26010315)
             
         Returns:
             {"success": bool, "message": str, "batch_code": str}
@@ -136,9 +136,6 @@ class BatchService:
                 "batch_code": self._batch_code
             }
         
-        # 判断是否续炼（相同批次号再次开始）
-        is_resuming_same_batch = (self._last_batch_code == batch_code)
-        
         # 设置新批次
         self._batch_code = batch_code
         self._state = SmeltingState.RUNNING
@@ -146,14 +143,10 @@ class BatchService:
         self._pause_time = None
         self._total_pause_duration = 0.0
         
-        if is_resuming_same_batch:
-            # 相同批次号：续炼模式，从数据库恢复累计值
-            print(f"🔄 续炼模式：批次号 {batch_code} 与上次相同，恢复累计值...")
-            self._restore_accumulators_from_db(batch_code)
-        else:
-            # 新批次号：重置累计器
-            print(f"🆕 新批次模式：重置累计器...")
-            self._reset_accumulators(batch_code)
+        # 【修改】统一处理：无论是续炼还是新批次，每次计算时都从数据库查询最新值
+        # 只需要重置累计器（清空队列、设置批次号）
+        print(f"🆕 开始冶炼：批次号 {batch_code}")
+        self._reset_accumulators(batch_code)
         
         # 持久化状态
         self._save_state_to_file()
@@ -182,89 +175,6 @@ class BatchService:
             feeding_acc.reset_for_new_batch(batch_code)
         except Exception as e:
             print(f"⚠️ 重置投料累计器失败: {e}")
-    
-    def _restore_accumulators_from_db(self, batch_code: str):
-        """从数据库恢复累计值（续炼时调用）"""
-        try:
-            from app.core.influxdb import get_influxdb_client
-            from config import get_settings
-            
-            settings = get_settings()
-            influx = get_influxdb_client()
-            
-            print(f"🔍 开始查询批次 {batch_code} 的累计值...")
-            
-            # 查询该批次的最新累计值
-            # 注意: 字段名要与 polling_data_processor.py 中写入时的名称一致
-            # - feeding_total: 投料累计 (module_type=hopper_weight)
-            # - furnace_cover_water_total: 炉盖冷却水累计 (module_type=cooling_water_total)
-            # - furnace_shell_water_total: 炉皮冷却水累计 (module_type=cooling_water_total)
-            query = f'''
-                from(bucket: "{settings.influxdb_bucket}")
-                    |> range(start: -7d)
-                    |> filter(fn: (r) => r["_measurement"] == "sensor_data")
-                    |> filter(fn: (r) => r["batch_code"] == "{batch_code}")
-                    |> filter(fn: (r) => 
-                        r["_field"] == "feeding_total" or 
-                        r["_field"] == "furnace_cover_water_total" or 
-                        r["_field"] == "furnace_shell_water_total"
-                    )
-                    |> last()
-            '''
-            
-            print(f"📝 执行查询: bucket={settings.influxdb_bucket}, batch_code={batch_code}")
-            result = influx.query_api().query(query)
-            
-            feeding_total = 0.0
-            cover_total = 0.0
-            shell_total = 0.0
-            records_found = 0
-            
-            for table in result:
-                for record in table.records:
-                    records_found += 1
-                    field = record.get_field()
-                    value = record.get_value()
-                    print(f"   📌 找到记录: field={field}, value={value}")
-                    if field == "feeding_total":
-                        feeding_total = float(value) if value else 0.0
-                    elif field == "furnace_cover_water_total":
-                        cover_total = float(value) if value else 0.0
-                    elif field == "furnace_shell_water_total":
-                        shell_total = float(value) if value else 0.0
-            
-            print(f"📊 查询结果: 共{records_found}条记录, 投料={feeding_total:.1f}kg, 炉盖水={cover_total:.3f}m³, 炉皮水={shell_total:.3f}m³")
-            
-            # 恢复投料累计
-            if feeding_total > 0:
-                from app.services.feeding_accumulator import get_feeding_accumulator
-                feeding_acc = get_feeding_accumulator()
-                feeding_acc._current_batch_code = batch_code
-                feeding_acc.set_feeding_total(feeding_total)
-                print(f"📥 投料累计已恢复: {feeding_total:.1f}kg")
-            else:
-                print(f"⚠️ 未找到投料累计数据")
-            
-            # 恢复冷却水累计
-            if cover_total > 0 or shell_total > 0:
-                from app.services.cooling_water_calculator import get_cooling_water_calculator
-                cooling_calc = get_cooling_water_calculator()
-                cooling_calc._current_batch_code = batch_code
-                cooling_calc._furnace_cover_total_volume = cover_total
-                cooling_calc._furnace_shell_total_volume = shell_total
-                print(f"📥 冷却水累计已恢复: 炉盖={cover_total:.3f}m³, 炉皮={shell_total:.3f}m³")
-            else:
-                print(f"⚠️ 未找到冷却水累计数据")
-            
-            print(f"✅ 续炼累计值恢复完成 (批次: {batch_code})")
-            
-        except Exception as e:
-            print(f"⚠️ 从数据库恢复累计值失败: {e}")
-            import traceback
-            traceback.print_exc()
-            # 恢复失败时降级为重置
-            print(f"⚠️ 降级为重置模式...")
-            self._reset_accumulators(batch_code)
     
     def pause(self) -> dict:
         """
@@ -424,9 +334,9 @@ class BatchService:
             # 恢复状态
             saved_state = state_data.get("state", "idle")
             
-            # 如果之前是运行中或暂停中，恢复为暂停状态（安全起见）
+            # 如果之前是运行中或暂停中，恢复为运行状态（断电保护）
             if saved_state in ("running", "paused"):
-                self._state = SmeltingState.PAUSED  # 恢复后默认暂停
+                self._state = SmeltingState.RUNNING  # 恢复后自动运行，继续写入数据
                 self._batch_code = state_data.get("batch_code")
                 self._last_batch_code = state_data.get("last_batch_code")  # 恢复上次批次号
                 
@@ -434,10 +344,11 @@ class BatchService:
                     self._start_time = datetime.fromisoformat(state_data["start_time"])
                 
                 self._total_pause_duration = state_data.get("total_pause_duration", 0.0)
-                self._pause_time = datetime.now()  # 从现在开始计算暂停
+                self._pause_time = None  # 断电恢复后不计算暂停时长
                 
-                print(f"[BatchService] 🔄 断电恢复: 批次={self._batch_code}, 状态=paused")
+                print(f"[BatchService] 🔄 断电恢复: 批次={self._batch_code}, 状态=running")
                 print(f"[BatchService]    原状态={saved_state}, 已运行={self.elapsed_seconds:.0f}秒")
+                print(f"[BatchService]    ⚠️ 自动恢复为运行状态，继续写入数据")
             else:
                 # 空闲状态也恢复 last_batch_code（用于续炼判断）
                 self._last_batch_code = state_data.get("last_batch_code")

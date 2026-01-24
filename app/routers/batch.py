@@ -24,12 +24,12 @@ router = APIRouter(prefix="/api/batch", tags=["批次管理"])
 
 class StartRequest(BaseModel):
     """开始冶炼请求"""
-    batch_code: str = Field(..., description="批次编号，格式: FFYYMMDD (如 03260123)")
+    batch_code: str = Field(..., description="批次编号，格式: YYMMFFDD (如 26010315)")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "batch_code": "03260123"
+                "batch_code": "26010315"
             }
         }
 

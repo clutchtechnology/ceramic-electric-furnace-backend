@@ -13,6 +13,28 @@
 #   - "00": 停止 (不动作)
 #   - "11": 异常/故障
 # ============================================================
+# 【数据库写入说明 - 蝶阀开度数据】
+# ============================================================
+# 【重要】此模块的数据不写入 InfluxDB，仅内存缓存供 API 实时查询
+# ============================================================
+# 原因:
+#   - 蝶阀开度是计算值，非直接传感器数据
+#   - 开度变化频率低，历史查询需求不强
+#   - 实时开度通过 API 直接从内存获取
+# ============================================================
+# 数据结构 (内存缓存):
+#   - valve_id: 蝶阀编号 (1-4)
+#   - openness_percent: 当前开度 (0-100%)
+#   - current_status: 当前状态 ("01"/"10"/"00"/"11")
+#   - last_calibration: 上次校准 ("full_open"/"full_close")
+#   - calibration_time: 校准时间
+#   - batch_code: 所属批次号
+# ============================================================
+# 计算逻辑:
+#   - 开启增量: interval(秒) / 全开时间(秒) × 100%
+#   - 关闭增量: interval(秒) / 全关时间(秒) × 100%
+#   - 自动校准: 连续30秒相同状态触发全开/全关校准
+# ============================================================
 
 import threading
 from datetime import datetime, timezone, timedelta
@@ -106,6 +128,9 @@ class ValveCalculatorService:
         self._initialized = True
         print("✅ 蝶阀开度计算服务已初始化")
     
+    # ============================================================
+    # 1: 状态添加模块
+    # ============================================================
     def add_status(self, valve_id: int, status: str, timestamp: Optional[datetime] = None):
         """添加蝶阀状态记录
         
@@ -151,6 +176,9 @@ class ValveCalculatorService:
             # 检查是否需要校准
             self._check_calibration(valve_id)
     
+    # ============================================================
+    # 2: 开度计算模块
+    # ============================================================
     def _calculate_openness_delta(self, valve_id: int, status: str, interval: float):
         """计算开度增量
         
@@ -176,6 +204,9 @@ class ValveCalculatorService:
         
         # "00"(停止) 和 "11"(故障) 不改变开度
     
+    # ============================================================
+    # 3: 队列清理模块
+    # ============================================================
     def _cleanup_old_records(self, valve_id: int, current_time: datetime):
         """清理超过35秒的旧记录"""
         queue = self._status_queues[valve_id]
@@ -231,6 +262,9 @@ class ValveCalculatorService:
                     openness.calibration_time = now
                     print(f"🔧 蝶阀{valve_id}触发全开校准: 开度重置为100%")
     
+    # ============================================================
+    # 4: 批次管理模块
+    # ============================================================
     def reset_openness(self, valve_id: Optional[int] = None, batch_code: Optional[str] = None):
         """重置蝶阀开度
         
@@ -269,6 +303,9 @@ class ValveCalculatorService:
             for vid in range(1, 5):
                 self._openness[vid].batch_code = batch_code
     
+    # ============================================================
+    # 5: 数据获取模块
+    # ============================================================
     def get_openness(self, valve_id: int) -> ValveOpenness:
         """获取单个蝶阀开度"""
         with self._data_lock:
@@ -325,7 +362,7 @@ class ValveCalculatorService:
 
 
 # ============================================================
-# 便捷函数
+# 6: 便捷函数模块
 # ============================================================
 def get_valve_calculator_service() -> ValveCalculatorService:
     """获取蝶阀开度计算服务实例"""

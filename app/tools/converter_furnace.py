@@ -6,6 +6,35 @@
 #   2. 添加业务上下文 (Tags)
 #   3. 执行复杂的业务计算 (如必要)
 # ============================================================
+# 【数据库写入说明 - DB32 传感器数据】
+# ============================================================
+# Measurement: sensor_data
+# Tags:
+#   - device_type: electric_furnace
+#   - device_id: furnace_1
+#   - factory_area: L3
+#   - module_type: electrode_depth / cooling_system / cooling_water_total
+#   - sensor: electrode_1/2/3 / cooling_water_in/out / cooling_line_1/2
+#   - batch_code: 批次号 (动态)
+# Fields (按 module_type 分类):
+# ============================================================
+# module_type=electrode_depth (电极深度):
+#   - distance_mm: 电极深度 (mm)
+#   - high_word: 高字 (原始值)
+#   - low_word: 低字 (原始值)
+# ============================================================
+# module_type=cooling_system, metric=pressure (冷却水压力):
+#   - value: 压力值 (kPa, 原始值×0.01)
+#   - raw: 原始值
+# ============================================================
+# module_type=cooling_system, metric=flow (冷却水流量):
+#   - value: 流量值 (m³/h)
+#   - raw: 原始值
+# ============================================================
+# module_type=cooling_water_total (冷却水累计 - 在 polling_data_processor.py 中添加):
+#   - furnace_shell_water_total: 炉皮累计流量 (m³)
+#   - furnace_cover_water_total: 炉盖累计流量 (m³)
+# ============================================================
 
 from typing import Dict, Any, List
 from datetime import datetime
@@ -16,6 +45,9 @@ class FurnaceConverter:
     def __init__(self):
         pass
         
+    # ============================================================
+    # 1: 数据转换主函数
+    # ============================================================
     def convert_to_points(self, parsed_data: Dict[str, Any], timestamp: datetime, batch_code: str = None) -> List[Dict[str, Any]]:
         """将解析后的数据转换为 InfluxDB Point 字典列表
         

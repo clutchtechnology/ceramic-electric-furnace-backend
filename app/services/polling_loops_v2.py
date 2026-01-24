@@ -11,6 +11,31 @@
 #   - 自动启动 (无需前端触发)
 #   - 开始冶炼时切换 DB1 速度
 # ============================================================
+# 【数据库写入说明 - 轮询架构】
+# ============================================================
+# 1: DB1 弧流弧压轮询 (_db1_arc_polling_loop)
+#    - 轮询间隔: 5秒(默认) / 0.2秒(冶炼中)
+#    - 批量写入: 20次轮询后写入 (4秒)
+#    - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+#    - 数据点: 弧流(3) + 弧压(3) + 设定值(3,仅变化) + 死区(1,仅变化)
+# ============================================================
+# 2: DB32 传感器轮询 (_db32_sensor_polling_loop)
+#    - 轮询间隔: 0.5秒
+#    - 批量写入: 30次轮询后写入 (15秒)
+#    - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+#    - 数据点: 电极深度(3) + 冷却水压力(2) + 冷却水流量(2) + 冷却水累计(2)
+# ============================================================
+# 3: 料仓重量轮询 (与DB32同步)
+#    - 轮询间隔: 0.5秒
+#    - 批量写入: 30次轮询后写入 (15秒)
+#    - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+#    - 数据点: 净重(1) + 投料累计(1) + 投料状态(1)
+# ============================================================
+# 4: DB30/DB41 状态轮询 (_status_polling_loop)
+#    - 轮询间隔: 5秒
+#    - 写入: 不写入数据库，仅内存缓存
+#    - 数据点: 通信状态 + 数据有效性状态
+# ============================================================
 
 import asyncio
 import traceback
@@ -46,7 +71,7 @@ _normal_batch_size = 30  # 📊 DB32: 30次轮询后写入 (0.5s×30=15s)
 
 
 # ============================================================
-# 批量写入函数
+# 1: 批量写入函数模块
 # ============================================================
 async def _flush_arc_buffer():
     """批量写入 DB1 弧流弧压缓存"""
@@ -61,7 +86,7 @@ async def _flush_normal_buffer():
 
 
 # ============================================================
-# 状态查询函数
+# 2: 状态查询函数模块
 # ============================================================
 def get_polling_loops_status() -> dict:
     """获取所有轮询循环的状态
@@ -83,7 +108,7 @@ def get_polling_loops_status() -> dict:
 
 
 # ============================================================
-# DB1 弧流弧压轮询 (可变速)
+# 3: DB1 弧流弧压轮询模块 (可变速)
 # ============================================================
 async def _db1_arc_polling_loop(
     parser,
@@ -135,8 +160,13 @@ async def _db1_arc_polling_loop(
             # 处理数据 (获取当前批次号)
             from app.services.polling_service import get_batch_info
             batch_info = get_batch_info()
-            current_batch = batch_info.get('batch_code', 'SX999999')
-            process_func(db1_data, current_batch)
+            current_batch = batch_info.get('batch_code')
+            is_smelting = batch_info.get('is_smelting', False)
+            
+            # 只有在冶炼状态（running 或 paused）时才处理数据
+            # 断电恢复后状态为 running，batch_code 存在，会继续处理数据
+            if is_smelting and current_batch:
+                process_func(db1_data, current_batch)
             
             # 批量写入逻辑
             _arc_buffer_count += 1
@@ -173,7 +203,7 @@ async def _db1_arc_polling_loop(
 
 
 # ============================================================
-# DB32 传感器轮询 (固定 5s)
+# 4: DB32 传感器轮询模块 (固定 0.5s)
 # ============================================================
 async def _db32_sensor_polling_loop(
     parser,
@@ -259,13 +289,18 @@ async def _db32_sensor_polling_loop(
                 from app.services.polling_service import get_batch_info
                 from app.services.polling_data_processor import process_weight_data
                 batch_info = get_batch_info()
-                current_batch = batch_info.get('batch_code', 'SX999999')
-                process_weight_data(
-                    weight_data,
-                    current_batch,
-                    is_discharging=is_discharging,
-                    is_requesting=is_requesting
-                )
+                current_batch = batch_info.get('batch_code')
+                is_smelting = batch_info.get('is_smelting', False)
+                
+                # 只有在冶炼状态（running 或 paused）时才处理数据
+                # 断电恢复后状态为 running，batch_code 存在，会继续处理数据
+                if is_smelting and current_batch:
+                    process_weight_data(
+                        weight_data,
+                        current_batch,
+                        is_discharging=is_discharging,
+                        is_requesting=is_requesting
+                    )
             
             # 批量写入逻辑 (每15秒写一次: 0.5s×30=15s)
             _normal_buffer_count += 1
@@ -299,7 +334,7 @@ async def _db32_sensor_polling_loop(
 
 
 # ============================================================
-# DB30/DB41 状态轮询 (固定 5s, 仅缓存)
+# 5: DB30/DB41 状态轮询模块 (固定 5s, 仅缓存)
 # ============================================================
 async def _status_polling_loop(
     db30_parser,

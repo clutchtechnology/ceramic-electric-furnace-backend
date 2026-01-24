@@ -7,6 +7,28 @@
 #   3. 实时计算前置过滤器压差
 #   4. 按批次重置累计流量
 # ============================================================
+# 【数据库写入说明 - 冷却水累计数据】
+# ============================================================
+# Measurement: sensor_data
+# Tags:
+#   - device_type: electric_furnace
+#   - module_type: cooling_water_total
+#   - device_id: furnace_1
+#   - batch_code: 批次号 (动态)
+# Fields (共2个数据点):
+# ============================================================
+#   - furnace_shell_water_total: 炉皮累计流量 (m³)
+#   - furnace_cover_water_total: 炉盖累计流量 (m³)
+# ============================================================
+# 写入逻辑:
+#   - 轮询间隔: 0.5秒 (与DB32同步)
+#   - 计算间隔: 15秒 (30次轮询)
+#   - 流量计算: 平均流速(m³/h) × 时间(h) = 流量增量(m³)
+#   - 压差计算: 炉皮水压 - 炉盖水压 = 前置过滤器压差 (kPa)
+#   - 批次重置: 新批次开始时从数据库恢复累计值或从0开始
+# ============================================================
+# 注意: 此模块仅计算累计流量，实时流量和压差在 DB32 传感器数据中写入
+# ============================================================
 
 import threading
 import statistics
@@ -58,9 +80,8 @@ class CoolingWaterCalculator:
         
         # ============================================================
         # 累计流量 (单位: m³) - 按批次重置
+        # 【修改】移除内存缓存，每次计算时从数据库查询最新值
         # ============================================================
-        self._furnace_cover_total_volume: float = 0.0  # 炉盖累计
-        self._furnace_shell_total_volume: float = 0.0  # 炉皮累计
         
         # ============================================================
         # 批次信息
@@ -74,13 +95,13 @@ class CoolingWaterCalculator:
         
         print("✅ 冷却水计算器已初始化")
     
+    # ============================================================
+    # 1: 批次管理模块
+    # ============================================================
     def reset_for_new_batch(self, batch_code: str):
         """重置累计流量 (新批次开始时调用)
         
-        逻辑:
-        1. 先从数据库查询该批次的最新累计值
-        2. 如果找到历史数据，则延续累计（续炼）
-        3. 如果没有历史数据，则从0开始（新批次）
+        【修改】每次计算时从数据库查询最新值，无需预先恢复
         """
         with self._data_lock:
             # 清空队列和计数器
@@ -88,21 +109,12 @@ class CoolingWaterCalculator:
             self._furnace_shell_flow_queue.clear()
             self._poll_count = 0
             self._current_batch_code = batch_code
-            
-            # 尝试从数据库恢复历史累计值
-            cover_restored, shell_restored = self._restore_from_database(batch_code)
-            
-            if cover_restored > 0 or shell_restored > 0:
-                self._furnace_cover_total_volume = cover_restored
-                self._furnace_shell_total_volume = shell_restored
-                print(f"📥 冷却水累计已恢复 (批次: {batch_code}): 炉盖={cover_restored:.3f}m³, 炉皮={shell_restored:.3f}m³")
-            else:
-                self._furnace_cover_total_volume = 0.0
-                self._furnace_shell_total_volume = 0.0
-                print(f"🆕 冷却水累计从0开始 (批次: {batch_code})")
+            print(f"🆕 冷却水计算器已重置 (批次: {batch_code})")
     
-    def _restore_from_database(self, batch_code: str) -> tuple[float, float]:
+    def _get_latest_from_database(self, batch_code: str) -> tuple[float, float]:
         """从 InfluxDB 查询该批次的最新累计值
+        
+        【修改】每次计算时调用此方法获取最新值
         
         Returns:
             (furnace_cover_total, furnace_shell_total)
@@ -115,7 +127,7 @@ class CoolingWaterCalculator:
             influx = get_influxdb_client()
             
             query = f'''
-                from(bucket: "{settings.influxdb_bucket}")
+                from(bucket: "{settings.influx_bucket}")
                     |> range(start: -7d)
                     |> filter(fn: (r) => r["_measurement"] == "sensor_data")
                     |> filter(fn: (r) => r["batch_code"] == "{batch_code}")
@@ -147,6 +159,9 @@ class CoolingWaterCalculator:
             print(f"⚠️ 从数据库恢复冷却水累计失败: {e}")
             return 0.0, 0.0
     
+    # ============================================================
+    # 2: 数据添加模块
+    # ============================================================
     def add_measurement(
         self,
         furnace_cover_flow: float,  # 炉盖流速 m³/h
@@ -199,6 +214,9 @@ class CoolingWaterCalculator:
                 'should_calc_volume': should_calc,
             }
     
+    # ============================================================
+    # 3: 累计流量计算模块
+    # ============================================================
     def calculate_volume_increment(self) -> Dict[str, Any]:
         """计算15秒内的流量增量并累加
         
@@ -224,7 +242,6 @@ class CoolingWaterCalculator:
                 # 流量 = 平均流速(m³/h) × 时间(h)
                 # 15秒 = 15/3600 小时
                 cover_delta = avg_flow * (self.CALC_INTERVAL_SEC / 3600)
-                self._furnace_cover_total_volume += cover_delta
             
             # 计算炉皮流量增量
             shell_delta = 0.0
@@ -232,34 +249,50 @@ class CoolingWaterCalculator:
                 recent_flows = list(self._furnace_shell_flow_queue)[-self.CALC_WINDOW:]
                 avg_flow = statistics.mean(recent_flows)
                 shell_delta = avg_flow * (self.CALC_INTERVAL_SEC / 3600)
-                self._furnace_shell_total_volume += shell_delta
+            
+            # 【修改】从数据库查询最新累计值 + 本次增量
+            latest_cover, latest_shell = self._get_latest_from_database(self._current_batch_code) if self._current_batch_code else (0.0, 0.0)
+            new_cover_total = latest_cover + cover_delta
+            new_shell_total = latest_shell + shell_delta
+            
+            # 【修改】直接写入数据库
+            self._write_to_database(self._current_batch_code, new_cover_total, new_shell_total)
             
             result = {
                 'furnace_cover_delta': cover_delta,
                 'furnace_shell_delta': shell_delta,
-                'furnace_cover_total': self._furnace_cover_total_volume,
-                'furnace_shell_total': self._furnace_shell_total_volume,
+                'furnace_cover_total': new_cover_total,
+                'furnace_shell_total': new_shell_total,
                 'batch_code': self._current_batch_code,
                 'timestamp': datetime.now(timezone.utc).isoformat(),
             }
             
             if cover_delta > 0 or shell_delta > 0:
-                print(f"💧 冷却水累计: 炉盖+{cover_delta:.4f}m³ (总{self._furnace_cover_total_volume:.3f}m³), "
-                      f"炉皮+{shell_delta:.4f}m³ (总{self._furnace_shell_total_volume:.3f}m³)")
+                print(f"💧 冷却水累计: 炉盖+{cover_delta:.4f}m³ (DB最新{latest_cover:.3f}m³→{new_cover_total:.3f}m³), "
+                      f"炉皮+{shell_delta:.4f}m³ (DB最新{latest_shell:.3f}m³→{new_shell_total:.3f}m³)")
             
             return result
     
+    # ============================================================
+    # 4: 数据获取模块
+    # ============================================================
     def get_realtime_data(self) -> Dict[str, Any]:
-        """获取实时数据 (供API调用)"""
+        """获取实时数据 (供API调用)
+        
+        【修改】从数据库查询最新累计值
+        """
         with self._data_lock:
+            # 【修改】从数据库查询最新累计值
+            latest_cover, latest_shell = self._get_latest_from_database(self._current_batch_code) if self._current_batch_code else (0.0, 0.0)
+            
             return {
                 'furnace_cover_flow': self._furnace_cover_flow_queue[-1] if self._furnace_cover_flow_queue else 0.0,
                 'furnace_shell_flow': self._furnace_shell_flow_queue[-1] if self._furnace_shell_flow_queue else 0.0,
                 'furnace_cover_pressure': self._furnace_cover_pressure,
                 'furnace_shell_pressure': self._furnace_shell_pressure,
                 'pressure_diff': self._pressure_diff,
-                'furnace_cover_total_volume': self._furnace_cover_total_volume,
-                'furnace_shell_total_volume': self._furnace_shell_total_volume,
+                'furnace_cover_total_volume': latest_cover,
+                'furnace_shell_total_volume': latest_shell,
                 'batch_code': self._current_batch_code,
                 'queue_size': {
                     'cover': len(self._furnace_cover_flow_queue),
@@ -272,12 +305,67 @@ class CoolingWaterCalculator:
         with self._data_lock:
             return self._pressure_diff
     
+    def _write_to_database(self, batch_code: str, cover_total: float, shell_total: float):
+        """写入累计流量到 InfluxDB
+        
+        【新增】每次计算后直接写入数据库
+        
+        Args:
+            batch_code: 批次号
+            cover_total: 炉盖累计流量 (m³)
+            shell_total: 炉皮累计流量 (m³)
+        """
+        try:
+            from app.core.influxdb import write_point
+            from datetime import datetime, timezone
+            
+            now = datetime.now(timezone.utc)
+            
+            # 写入炉盖累计
+            write_point(
+                measurement='sensor_data',
+                tags={
+                    'device_type': 'electric_furnace',
+                    'module_type': 'cooling_water_total',
+                    'device_id': 'furnace_1',
+                    'batch_code': batch_code
+                },
+                fields={
+                    'furnace_cover_water_total': cover_total,
+                },
+                timestamp=now
+            )
+            
+            # 写入炉皮累计
+            write_point(
+                measurement='sensor_data',
+                tags={
+                    'device_type': 'electric_furnace',
+                    'module_type': 'cooling_water_total',
+                    'device_id': 'furnace_1',
+                    'batch_code': batch_code
+                },
+                fields={
+                    'furnace_shell_water_total': shell_total,
+                },
+                timestamp=now
+            )
+            
+            print(f"💾 冷却水累计已写入数据库 (批次: {batch_code}): 炉盖={cover_total:.3f}m³, 炉皮={shell_total:.3f}m³")
+                
+        except Exception as e:
+            print(f"❌ 写入冷却水累计到数据库失败: {e}")
+    
     def get_total_volumes(self) -> Dict[str, float]:
-        """获取累计流量"""
+        """获取累计流量
+        
+        【修改】从数据库查询最新值
+        """
         with self._data_lock:
+            latest_cover, latest_shell = self._get_latest_from_database(self._current_batch_code) if self._current_batch_code else (0.0, 0.0)
             return {
-                'furnace_cover': self._furnace_cover_total_volume,
-                'furnace_shell': self._furnace_shell_total_volume,
+                'furnace_cover': latest_cover,
+                'furnace_shell': latest_shell,
             }
 
 

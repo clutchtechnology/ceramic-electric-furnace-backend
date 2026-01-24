@@ -158,7 +158,7 @@ def _query_batch_codes(
                     batch_codes.add(batch_code)
         
         # 过滤不规范的批次号
-        # 有效格式: XX-XXXX-XX-XX (如 03-2026-01-23) 或 XXXXXXXX (如 03260123)
+        # 有效格式: XX-XXXX-XX-XX (如 03-2026-01-23) 或 XXXXXXXX (如 26010315)
         import re
         valid_pattern = re.compile(r'^\d{2}-\d{4}-\d{2}-\d{2}$|^\d{8}$')
         filtered_codes = [bc for bc in batch_codes if valid_pattern.match(bc)]
