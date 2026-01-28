@@ -20,6 +20,7 @@
 #      * 冷却水压力: WATER_PRESS_1/2 (value kPa, raw)
 #      * 冷却水流量: WATER_FLOW_1/2 (value m³/h, raw)
 #      * 冷却水累计: furnace_shell_water_total, furnace_cover_water_total (每15秒计算)
+#      * 炉皮-炉盖压差: |炉皮压力 - 炉盖压力| (kPa)
 # ============================================================
 # 2: DB1 弧流弧压数据 (写入 InfluxDB)
 #    - 轮询间隔: 5秒(默认) / 0.2秒(冶炼中)
@@ -28,8 +29,15 @@
 #    - 数据点:
 #      * 弧流: arc_current_U/V/W (A) - 每次写入
 #      * 弧压: arc_voltage_U/V/W (V) - 每次写入
+#      * 功率: power_U/V/W (kW), power_total (kW) - 每次写入
 #      * 设定值: arc_current_setpoint_U/V/W (A) - 仅变化时写入
 #      * 死区: manual_deadzone_percent (%) - 仅变化时写入
+# ============================================================
+# 2.1: 能耗数据 (定时计算写入)
+#    - 计算间隔: 每15秒计算一次
+#    - 写入方式: 计算完成后立即写入
+#    - 数据点:
+#      * 累计能耗: energy_U/V/W_total (kWh), energy_total (kWh)
 # ============================================================
 # 3: 料仓重量数据 (写入 InfluxDB)
 #    - 轮询间隔: 0.5秒 (与DB32同步)
@@ -38,7 +46,8 @@
 #    - 数据点:
 #      * 净重: net_weight (kg)
 #      * 投料累计: feeding_total (kg) - 每30秒计算一次增量
-#      * 投料状态: is_discharging (0/1) - %Q3.7秤排料信号
+#    - 不写入数据库:
+#      * 投料状态: is_discharging (仅内存缓存，用于计算投料累计)
 # ============================================================
 # 4: 不写入数据库的数据 (仅内存缓存)
 #    - DB30 通信状态 (ModbusStatusParser)
@@ -65,6 +74,7 @@ from app.tools.converter_elec_db1_simple import (
     ArcDataSimple,
 )
 from app.services.feeding_accumulator import get_feeding_accumulator
+from app.services.power_energy_calculator import get_power_energy_calculator
 
 
 # ============================================================
@@ -363,6 +373,26 @@ def process_modbus_data(raw_data: bytes):
             }
             _normal_buffer.append(water_point)
             
+            # ========================================
+            # 7. 添加炉皮-炉盖压差绝对值 Point (用于历史查询)
+            # ========================================
+            pressure_diff_abs = abs(furnace_shell_pressure - furnace_cover_pressure)
+            pressure_diff_point = {
+                'measurement': 'sensor_data',
+                'tags': {
+                    'device_type': 'electric_furnace',
+                    'module_type': 'cooling_system',
+                    'device_id': 'furnace_1',
+                    'metric': 'pressure_diff',
+                    'batch_code': batch_code
+                },
+                'fields': {
+                    'value': pressure_diff_abs,
+                },
+                'time': now
+            }
+            _normal_buffer.append(pressure_diff_point)
+            
     except Exception as e:
         print(f"❌ 处理 DB32 数据失败: {e}")
         import traceback
@@ -373,6 +403,7 @@ def process_arc_data(raw_data: bytes, batch_code: str):
     """处理 DB1 弧流弧压数据 (缓存 + 写入数据库)
     
     设定值和死区仅在变化时才写入数据库
+    新增: 功率计算和能耗累计
     
     Args:
         raw_data: DB1 原始字节数据
@@ -395,7 +426,20 @@ def process_arc_data(raw_data: bytes, batch_code: str):
         # 2. 使用简化转换器 (直接使用原始值)
         arc_data_obj: ArcDataSimple = convert_db1_arc_data_simple(parsed)
         
-        # 3. 构建缓存数据 (UVW三相 + 三个设定值 + 手动死区)
+        # ========================================
+        # 3. 计算三相功率 (新增)
+        # ========================================
+        power_calc = get_power_energy_calculator()
+        power_result = power_calc.calculate_power(
+            arc_current_U=arc_data_obj.phase_U.current_A,
+            arc_voltage_U=arc_data_obj.phase_U.voltage_V,
+            arc_current_V=arc_data_obj.phase_V.current_A,
+            arc_voltage_V=arc_data_obj.phase_V.voltage_V,
+            arc_current_W=arc_data_obj.phase_W.current_A,
+            arc_voltage_W=arc_data_obj.phase_W.voltage_V,
+        )
+        
+        # 4. 构建缓存数据 (UVW三相 + 三个设定值 + 手动死区 + 功率)
         setpoints = arc_data_obj.get_setpoints_A()
         arc_cache = {
             'parsed': parsed,
@@ -410,6 +454,7 @@ def process_arc_data(raw_data: bytes, batch_code: str):
                 'V': arc_data_obj.phase_V.voltage_V,
                 'W': arc_data_obj.phase_W.voltage_V,
             },
+            'power_total': power_result['power_total'],
             'setpoints': {
                 'U': setpoints[0],
                 'V': setpoints[1],
@@ -419,23 +464,26 @@ def process_arc_data(raw_data: bytes, batch_code: str):
             'timestamp': arc_data_obj.timestamp
         }
         
-        # 4. 更新内存缓存
+        # 5. 更新内存缓存
         with _data_lock:
             _latest_arc_data = arc_cache
             _latest_arc_timestamp = datetime.now()
         
-        # 5. 使用变化检测转换为 InfluxDB 字段
+        # 6. 使用变化检测转换为 InfluxDB 字段
         now = datetime.now(timezone.utc)
         change_result = convert_to_influx_fields_with_change_detection(
             arc_data_obj, _prev_setpoints, _prev_deadzone
         )
         arc_fields = change_result['fields']
         
-        # 1: 更新上一次的值
+        # 7. 添加总功率字段到 arc_fields
+        arc_fields['power_total'] = power_result['power_total']
+        
+        # 8: 更新上一次的值
         _prev_setpoints = change_result['current_setpoints']
         _prev_deadzone = change_result['current_deadzone']
 
-        # 2: 写入弧流弧压数据 (不包含 feeding_total，该字段只在 hopper_weight 中)
+        # 9: 写入弧流弧压+功率数据到缓存
         if arc_fields:
             point_dict = {
                 'measurement': 'sensor_data',
@@ -457,7 +505,30 @@ def process_arc_data(raw_data: bytes, batch_code: str):
             if change_result['has_deadzone_change']:
                 setpoint_info += f", 死区变化: {arc_data_obj.manual_deadzone_percent}%"
             
-            print(f"✅ [DB1] 弧流弧压数据已缓存: U相弧流={arc_data_obj.phase_U.current_A}A{setpoint_info}")
+            print(f"✅ [DB1] 弧流弧压+功率数据已缓存: U相弧流={arc_data_obj.phase_U.current_A}A, "
+                  f"功率={power_result['power_total']:.2f}kW{setpoint_info}")
+        
+        # ========================================
+        # 10. 检查是否需要计算能耗 (每15秒)
+        # ========================================
+        if power_result['should_calc_energy']:
+            energy_result = power_calc.calculate_energy_increment()
+            
+            # 将能耗数据添加到缓存（批量写入）
+            energy_point = {
+                'measurement': 'sensor_data',
+                'tags': {
+                    'device_type': 'electric_furnace',
+                    'module_type': 'energy_consumption',
+                    'device_id': 'electrode',
+                    'batch_code': batch_code
+                },
+                'fields': {
+                    'energy_total': energy_result['energy_total'],
+                },
+                'time': now
+            }
+            _arc_buffer.append(energy_point)
             
     except Exception as e:
         print(f"❌ 处理 DB1 弧流弧压数据失败: {e}")
@@ -555,7 +626,7 @@ def process_weight_data(
                 _latest_weight_data['feeding_total'] = feeding_acc.get_feeding_total()
                 _latest_weight_data['is_discharging'] = is_discharging
             
-            # 2.3 转换为 InfluxDB Point
+            # 2.3 转换为 InfluxDB Point（只存储净重和累计投料量）
             point_dict = {
                 'measurement': 'sensor_data',
                 'tags': {
@@ -567,7 +638,6 @@ def process_weight_data(
                 'fields': {
                     'net_weight': weight_kg,
                     'feeding_total': feeding_acc.get_feeding_total(),
-                    'is_discharging': 1 if is_discharging else 0,
                 },
                 'time': now
             }

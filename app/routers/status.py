@@ -22,7 +22,7 @@ router = APIRouter()
 
 @router.get("/db30")
 async def get_db30_status() -> Dict[str, Any]:
-    """获取 DB30 Modbus 通信状态
+    """获取 DB30
     
     Returns:
         DB30 通信状态数据 (10个设备的 Done/Busy/Error/Status)

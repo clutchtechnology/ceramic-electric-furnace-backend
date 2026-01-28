@@ -15,12 +15,23 @@
 # ============================================================
 # 【数据库写入说明 - 蝶阀开度数据】
 # ============================================================
-# 【重要】此模块的数据不写入 InfluxDB，仅内存缓存供 API 实时查询
+# 【重要】此模块的数据写入 InfluxDB，用于历史查询和趋势分析
 # ============================================================
-# 原因:
-#   - 蝶阀开度是计算值，非直接传感器数据
-#   - 开度变化频率低，历史查询需求不强
-#   - 实时开度通过 API 直接从内存获取
+# 写入策略:
+#   - 轮询间隔: 0.5秒 (与 DB32 同步)
+#   - 批量写入: 30次轮询后写入 (15秒)
+#   - 写入条件: 必须有批次号(batch_code)且冶炼状态为running/paused
+# ============================================================
+# 数据结构 (InfluxDB):
+#   measurement: valve_openness
+#   tags:
+#     - device_type: electric_furnace
+#     - module_type: valve_control
+#     - valve_id: 1/2/3/4
+#     - batch_code: 批次号
+#   fields:
+#     - openness_percent: 当前开度 (0-100%)
+#   time: 时间戳
 # ============================================================
 # 数据结构 (内存缓存):
 #   - valve_id: 蝶阀编号 (1-4)
@@ -43,6 +54,20 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from app.services.valve_config_service import get_valve_config_service
+
+
+# ============================================================
+# 蝶阀开度数据库写入缓存队列
+# ============================================================
+# 4个蝶阀各自维护一个缓存队列，定时批量写入 InfluxDB
+_valve_openness_buffers: Dict[int, deque] = {
+    1: deque(maxlen=100),
+    2: deque(maxlen=100),
+    3: deque(maxlen=100),
+    4: deque(maxlen=100),
+}
+_valve_buffer_counts: Dict[int, int] = {1: 0, 2: 0, 3: 0, 4: 0}
+_valve_batch_size = 30  # 30次轮询后批量写入 (0.5s×30=15s)
 
 
 # ============================================================
@@ -175,6 +200,11 @@ class ValveCalculatorService:
             
             # 检查是否需要校准
             self._check_calibration(valve_id)
+            
+            # ============================================================
+            # 添加到数据库写入缓存队列
+            # ============================================================
+            self._add_to_write_buffer(valve_id, timestamp)
     
     # ============================================================
     # 2: 开度计算模块
@@ -359,6 +389,55 @@ class ValveCalculatorService:
             status = f"{bit_close}{bit_open}"
             
             self.add_status(valve_id, status, timestamp)
+    
+    # ============================================================
+    # 7: 数据库写入模块
+    # ============================================================
+    def _add_to_write_buffer(self, valve_id: int, timestamp: datetime):
+        """添加蝶阀开度数据到写入缓存
+        
+        Args:
+            valve_id: 蝶阀编号 (1-4)
+            timestamp: 时间戳
+        """
+        global _valve_openness_buffers, _valve_buffer_counts
+        
+        openness = self._openness[valve_id]
+        batch_code = openness.batch_code
+        
+        # 只有在有批次号时才缓存数据
+        if not batch_code:
+            return
+        
+        # 构建数据点（只存储开度百分比）
+        point_dict = {
+            'measurement': 'valve_openness',
+            'tags': {
+                'device_type': 'electric_furnace',
+                'module_type': 'valve_control',
+                'valve_id': str(valve_id),
+                'batch_code': batch_code
+            },
+            'fields': {
+                'openness_percent': round(openness.openness_percent, 2),
+            },
+            'time': timestamp
+        }
+        
+        _valve_openness_buffers[valve_id].append(point_dict)
+        _valve_buffer_counts[valve_id] += 1
+    
+    def get_buffer_status(self) -> Dict[str, Any]:
+        """获取缓存队列状态 (调试用)"""
+        global _valve_openness_buffers, _valve_buffer_counts
+        
+        return {
+            'buffer_sizes': {
+                vid: len(_valve_openness_buffers[vid]) for vid in range(1, 5)
+            },
+            'buffer_counts': _valve_buffer_counts.copy(),
+            'batch_size': _valve_batch_size,
+        }
 
 
 # ============================================================
@@ -395,3 +474,86 @@ def reset_all_valve_openness(batch_code: Optional[str] = None):
     """重置所有蝶阀开度 (便捷函数)"""
     service = get_valve_calculator_service()
     service.reset_openness(batch_code=batch_code)
+
+
+# ============================================================
+# 8: 数据库批量写入函数
+# ============================================================
+async def flush_valve_openness_buffers():
+    """批量写入所有蝶阀开度缓存到 InfluxDB
+    
+    注意: 只有在冶炼状态 (is_smelting=True) 时才写入数据库
+    """
+    global _valve_openness_buffers, _valve_buffer_counts
+    
+    # 检查批次状态 - 只有冶炼中（running 或 paused）才写数据库
+    from app.services.batch_service import get_batch_service
+    batch_service = get_batch_service()
+    
+    if not batch_service.is_smelting:
+        # 未开始冶炼时，清空缓存但不写入
+        total_skipped = sum(len(_valve_openness_buffers[vid]) for vid in range(1, 5))
+        for vid in range(1, 5):
+            _valve_openness_buffers[vid].clear()
+            _valve_buffer_counts[vid] = 0
+        if total_skipped > 0:
+            print(f"⏸️ [Valve] 跳过写入 {total_skipped} 个蝶阀开度数据点 (状态: {batch_service.state.value})")
+        return
+    
+    # 收集所有蝶阀的缓存数据
+    all_points = []
+    for valve_id in range(1, 5):
+        buffer = _valve_openness_buffers[valve_id]
+        if buffer:
+            all_points.extend(list(buffer))
+            buffer.clear()
+            _valve_buffer_counts[valve_id] = 0
+    
+    if not all_points:
+        return
+    
+    # 转换为 InfluxDB Point 对象
+    from app.core.influxdb import write_points_batch, build_point
+    
+    influx_points = []
+    for dp in all_points:
+        p = build_point(dp['measurement'], dp['tags'], dp['fields'], dp['time'])
+        if p:
+            influx_points.append(p)
+    
+    if not influx_points:
+        return
+    
+    try:
+        success, err = write_points_batch(influx_points)
+        if success:
+            print(f"✅ [Valve] 批量写入成功: {len(influx_points)} 个蝶阀开度数据点")
+        else:
+            print(f"❌ [Valve] 批量写入失败: {err}")
+    except Exception as e:
+        print(f"❌ [Valve] 批量写入异常: {e}")
+
+
+def should_flush_valve_buffers() -> bool:
+    """检查是否应该执行批量写入
+    
+    Returns:
+        bool: 如果任意一个蝶阀的缓存计数达到批量大小，返回 True
+    """
+    global _valve_buffer_counts, _valve_batch_size
+    
+    return any(count >= _valve_batch_size for count in _valve_buffer_counts.values())
+
+
+def get_valve_buffer_status() -> Dict[str, Any]:
+    """获取蝶阀缓存队列状态 (调试用)"""
+    global _valve_openness_buffers, _valve_buffer_counts, _valve_batch_size
+    
+    return {
+        'buffer_sizes': {
+            vid: len(_valve_openness_buffers[vid]) for vid in range(1, 5)
+        },
+        'buffer_counts': _valve_buffer_counts.copy(),
+        'batch_size': _valve_batch_size,
+        'should_flush': should_flush_valve_buffers(),
+    }

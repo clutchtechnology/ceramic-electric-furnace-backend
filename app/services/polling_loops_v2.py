@@ -69,6 +69,9 @@ _arc_batch_size = 20  # 🔥 DB1: 20次轮询后写入 (0.2s×20=4s)
 _normal_buffer_count = 0
 _normal_batch_size = 30  # 📊 DB32: 30次轮询后写入 (0.5s×30=15s)
 
+_valve_buffer_count = 0
+_valve_batch_size = 30  # 🔧 Valve: 30次轮询后写入 (0.5s×30=15s)
+
 
 # ============================================================
 # 1: 批量写入函数模块
@@ -83,6 +86,12 @@ async def _flush_normal_buffer():
     """批量写入 DB32/重量缓存"""
     from app.services.polling_data_processor import flush_normal_buffer
     await flush_normal_buffer()
+
+
+async def _flush_valve_buffer():
+    """批量写入蝶阀开度缓存"""
+    from app.services.valve_calculator_service import flush_valve_openness_buffers
+    await flush_valve_openness_buffers()
 
 
 # ============================================================
@@ -308,12 +317,18 @@ async def _db32_sensor_polling_loop(
                 await _flush_normal_buffer()
                 _normal_buffer_count = 0
             
+            # 蝶阀开度批量写入逻辑 (每15秒写一次: 0.5s×30=15s)
+            _valve_buffer_count += 1
+            if _valve_buffer_count >= _valve_batch_size:
+                await _flush_valve_buffer()
+                _valve_buffer_count = 0
+            
             # 成功后重置错误计数器
             error_count = 0
             
             # 日志输出 (每60次=30秒输出一次)
             if poll_count % 60 == 0:
-                print(f"📊 DB32 轮询 #{poll_count} (缓存: {_normal_buffer_count}/{_normal_batch_size})")
+                print(f"📊 DB32 轮询 #{poll_count} (缓存: {_normal_buffer_count}/{_normal_batch_size}, 蝶阀: {_valve_buffer_count}/{_valve_batch_size})")
             
             await asyncio.sleep(interval)
             

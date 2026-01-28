@@ -1,10 +1,10 @@
 # ============================================================
-# ҵ������ (Services)
+# ҵ (Services)
 # ============================================================
-# ������ѯ������غ���
+# ѯغ
 
 from .polling_service import (
-    # ���ι����ͷ���״̬
+    # ιͷ״̬
     start_smelting,
     stop_smelting,
     get_batch_info,
@@ -14,7 +14,7 @@ from .polling_service import (
 )
 
 from .polling_data_processor import (
-    # ���ݻ�ȡ����
+    # ݻȡ
     get_latest_modbus_data,
     get_latest_status_data,
     get_latest_arc_data,
@@ -24,14 +24,14 @@ from .polling_data_processor import (
 )
 
 __all__ = [
-    # �������
+    # 
     'start_smelting',
     'stop_smelting',
     'get_batch_info',
     'get_polling_status',
     'get_polling_stats',
     'initialize_service',
-    # ���ݻ�ȡ
+    # ݻȡ
     'get_latest_modbus_data',
     'get_latest_status_data',
     'get_latest_arc_data',

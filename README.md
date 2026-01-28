@@ -1,6 +1,6 @@
 # 电炉监控后端
 
-陶瓷电炉监控系统后端（FastAPI + InfluxDB + S7-1200 + Modbus RTU）
+#3电炉后端（FastAPI + InfluxDB + S7-1200 + Modbus RTU）
 
 本 README 聚焦**后端核心需求**与**实现文件定位**，用于团队协作与后续维护。
 

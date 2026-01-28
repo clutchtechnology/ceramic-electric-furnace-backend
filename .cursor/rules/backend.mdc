@@ -1,0 +1,315 @@
+---
+alwaysApply: true
+---
+
+# #3电炉 - 后端项目规则
+
+## 项目概述
+
+这是#3电炉的后端项目，负责：
+- PLC 数据采集和解析
+- 数据处理和计算
+- InfluxDB 数据存储
+- FastAPI REST API 服务 (先不淘汰,但是后续我的pyqt6不会使用这个api)
+- 前端数据桥接（PyQt6 集成）单线程多进程 项目
+
+## 技术栈
+
+- **语言**: Python 3.12+
+- **框架**: FastAPI(舍弃但是保留原来逻辑)/pyqt6 直接集成前后端窗口和后端服务
+- **数据库**: InfluxDB 2.x, SQLite (报警存储)
+- **PLC 通信**: Snap7 (S7-1200/1500)
+- **Modbus**: pymodbus (料仓重量读取)
+- **前端桥接**: PyQt6 信号机制
+
+## 项目结构
+
+```
+ceramic-electric-furnace-backend/
+├── app/                        # 业务逻辑层
+│   ├── core/                   # 核心模块 (InfluxDB, 报警存储)
+│   ├── plc/                    # PLC 通信层 (解析器, 管理器)
+│   ├── services/               # 业务服务层 (轮询, 计算, 批次管理)
+│   ├── tools/                  # 工具层 (数据转换器, 滤波器)
+│   └── routers/                # FastAPI 路由
+├── frontend/                   # 前后端桥接层 (PyQt6)
+│   ├── data_bridge.py          # Qt 信号桥接器
+│   ├── data_cache.py           # 线程安全缓存
+│   └── data_models.py          # 数据模型
+├── configs/                    # YAML 配置文件
+├── main.py                     # FastAPI 入口
+└── main_gui.py                 # PyQt6 GUI 入口
+```
+
+## 编码规范
+
+### 1. 命名规范
+
+#### 1.1 基础命名规则
+
+- **文件名**: 小写下划线 `snake_case.py`
+- **类名**: 大驼峰 `PascalCase`
+- **函数/变量**: 小写下划线 `snake_case`
+- **常量**: 大写下划线 `UPPER_SNAKE_CASE`
+- **私有成员**: 单下划线前缀 `_private_method`
+
+#### 1.2 PyQt6 组件命名规范 ⭐
+
+**如果涉及 PyQt6 组件开发，组件文件名和类名必须遵循"组件类型_功能描述"格式**：
+
+✅ **正确命名**：
+```python
+# 文件名: button_tech.py
+class ButtonTech(QPushButton):
+    """科技风格按钮"""
+    pass
+
+# 文件名: panel_tech.py
+class PanelTech(QFrame):
+    """科技风格面板"""
+    pass
+```
+
+❌ **错误命名**：
+```python
+# 文件名: tech_button.py (错误：功能在前)
+class TechButton(QPushButton):
+    pass
+```
+
+**命名规则说明**：
+
+1. **组件类型在前**：先说明是什么组件（Button、Panel、Label、Card 等）
+2. **功能描述在后**：再说明具体功能（Tech、Blinking、Data 等）
+3. **文件名与类名对应**：`button_tech.py` → `ButtonTech`
+
+详细规范请参考 `ceramic-electric-furnace-pyqt/.cursor/rules/pyqt-frontend.mdc`
+
+### 2. 注释规范
+
+**使用序号+注释风格，不使用文档字符串注解**：
+
+```python
+# 1. 健康检查方法接口
+def healthy():
+    pass
+
+# 2. 读取 PLC 数据
+def read_plc_data(self):
+    pass
+```
+
+❌ **不要使用**：
+```python
+def healthy():
+    """健康检查方法接口
+    
+    Returns:
+        dict: 健康状态
+    """
+    pass
+```
+
+**文件头部注释**：
+```python
+"""
+文件功能简短描述（一行即可）
+"""
+```
+
+### 3. 代码设计原则
+
+**避免过度抽象**：
+- **不要提前抽象**：需要用的时候再抽象，不要一开始就创建大量工具方法
+- **避免冗余方法**：一个文件不要抽象出太多方法，保持简洁
+- **实用主义**：能直接写就直接写，不要为了"优雅"而过度封装
+
+✅ **好的做法**：
+```python
+# 1. 处理传感器数据
+def process_sensor_data(self, raw_data):
+    # 直接处理
+    temperature = raw_data[0] / 10.0
+    pressure = raw_data[1] / 100.0
+    return {"temperature": temperature, "pressure": pressure}
+```
+
+❌ **过度抽象**：
+```python
+def _convert_temperature(self, raw):
+    return raw / 10.0
+
+def _convert_pressure(self, raw):
+    return raw / 100.0
+
+def _create_sensor_dict(self, temp, press):
+    return {"temperature": temp, "pressure": press}
+
+def process_sensor_data(self, raw_data):
+    temp = self._convert_temperature(raw_data[0])
+    press = self._convert_pressure(raw_data[1])
+    return self._create_sensor_dict(temp, press)
+```
+
+### 4. UI 设计风格规范（PyQt6 前端）
+
+**科技风格设计原则**：
+
+#### 4.1 边框设计
+
+**按钮、卡片、面板等组件统一使用细亮边框**：
+
+```python
+# ✅ 标准边框样式
+border: 1px solid {colors.border};  # 默认状态
+border: 1px solid {colors.primary}; # 激活/选中状态
+border: 1px solid {colors.border_hover}; # 悬停状态
+```
+
+**边框特点**：
+- **宽度**: 统一使用 `1px`（细边框）
+- **颜色**: 
+  - 默认：`colors.border`（深色主题 #2a3f5f，浅色主题 #D4D9A0）
+  - 激活：`colors.primary`（深色主题 #00d4ff 青色发光，浅色主题 #007663 深绿）
+  - 悬停：`colors.border_hover`（比默认更亮）
+- **圆角**: 根据组件大小调整（按钮 4-6px，卡片 8-12px，面板 12-16px）
+
+**应用场景**：
+- ✅ 导航按钮（带边框）
+- ✅ 数据卡片（带边框）
+- ✅ 科技风面板（带边框）
+- ✅ 输入框（带边框）
+- ✅ 下拉框（带边框）
+- ✅ 表格单元格（带边框）
+
+#### 4.2 图标设计
+
+**图标不使用边框，只有图标本身**：
+
+```python
+# ✅ 图标样式（无边框）
+QLabel#icon {
+    border: none;           # 不要边框
+    background: transparent; # 透明背景
+}
+```
+
+**图标特点**：
+- **边框**: 无边框（`border: none`）
+- **背景**: 透明（`background: transparent`）
+- **颜色变化**: 通过 SVG 填充色变化实现状态切换
+  - 默认：`colors.text_secondary`（次要文字色）
+  - 激活：`colors.primary`（主色，青色/深绿）
+- **大小**: 根据场景调整（导航栏 20-24px，按钮内 16-18px，卡片内 14-16px）
+
+**SVG 图标处理**：
+```python
+# 1. 加载 SVG 并替换颜色
+def load_svg_icon(svg_path: str, color: str) -> QPixmap:
+    with open(svg_path, 'r', encoding='utf-8') as f:
+        svg_content = f.read()
+    # 替换填充色
+    svg_content = svg_content.replace('fill="currentColor"', f'fill="{color}"')
+    # 或者替换 stroke
+    svg_content = svg_content.replace('stroke="currentColor"', f'stroke="{color}"')
+    # 渲染为 QPixmap
+    renderer = QSvgRenderer(svg_content.encode())
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return pixmap
+```
+
+**应用场景**：
+- ✅ 设置按钮图标（齿轮，无边框）
+- ✅ 刷新按钮图标（无边框）
+- ✅ 导出按钮图标（无边框）
+- ✅ 状态指示图标（无边框）
+- ✅ 卡片内的小图标（无边框）
+
+#### 4.3 组件状态样式
+
+**统一的状态变化规则**：
+
+```python
+# 默认状态
+border: 1px solid {colors.border};
+background: {colors.card_bg};
+color: {colors.text_primary};
+
+# 悬停状态（hover）
+border: 1px solid {colors.border_hover};
+background: {colors.card_bg_hover};
+
+# 激活/选中状态（active/checked）
+border: 1px solid {colors.primary};
+background: {colors.primary}33;  # 20% 透明度
+color: {colors.primary};
+
+# 禁用状态（disabled）
+border: 1px solid {colors.border};
+background: {colors.card_bg};
+color: {colors.text_disabled};
+opacity: 0.5;
+```
+
+#### 4.4 设计示例
+
+**导航按钮**（带边框）：
+```python
+QPushButton {
+    border: 1px solid #2a3f5f;
+    border-radius: 6px;
+    background: transparent;
+    color: #e0e6ed;
+    padding: 8px 16px;
+}
+QPushButton:hover {
+    border: 1px solid #3a5f8f;
+}
+QPushButton:checked {
+    border: 1px solid #00d4ff;
+    background: rgba(0, 212, 255, 0.2);
+    color: #00d4ff;
+}
+```
+
+**设置按钮**（图标无边框）：
+```python
+QPushButton#settingsBtn {
+    border: none;              # 按钮本身无边框
+    background: transparent;
+    padding: 8px;
+}
+QPushButton#settingsBtn:hover {
+    background: rgba(255, 255, 255, 0.1);  # 悬停时只改变背景
+}
+# 图标颜色通过 SVG 动态替换实现
+```
+
+**数据卡片**（带边框）：
+```python
+QFrame#dataCard {
+    border: 1px solid #2a3f5f;
+    border-radius: 12px;
+    background: #1a1f3a;
+    padding: 16px;
+}
+QFrame#dataCard[alarm="true"] {
+    border: 1px solid #ff4444;  # 报警时红色边框
+}
+```
+
+### 5. 其他规范
+
+- **PowerShell 命令**：不支持 `&&`，使用分号 `;` 分隔命令
+- **称呼**：每次回答必须称呼我为"大王"
+- **测试文件**：不要创建多余的 md/py/test 文件，测试完毕后一定要删除
+- **进度跟踪**：参考 `IMPLEMENTATION_CHECKLIST.md`，完成后需要对应修改
+- **文档管理**：md 文件需要放到 `vdoc/` 目录里面
+- **代码整洁**：目录务必整洁，修改代码时删除旧代码，不要冗余
+- **回答执行规范**：你是一个很严格的python pyqt6写上位机的高手,你很严谨认真,且对代码很严苛,不会写无用冗余代码,并且很多问题,对于我希望实现的效果和架构你会认真思考,如果我的提议不好或者你有更好的方案,你会规劝我.
+- **最高优先级**:对于我的最主要的一个功能就是我的这个pyqt的窗口和我的py的后端的服务的话,不能死机卡死,这是最主要也是优先级最高的一个要求.
+- **反驳我的回答** 对于我说的需求等的话,肯定会有一些东西说的不专业,如果你理解了的话,就回答我,"大王,小的罪该万死,但是这个XXXX"这样回答.
